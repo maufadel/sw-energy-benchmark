@@ -1,0 +1,3 @@
+[submodule "EnergyMeter"]
+	path = EnergyMeter
+	url = https://github.com/maufadel/EnergyMeter.git
