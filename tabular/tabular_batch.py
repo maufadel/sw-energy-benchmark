@@ -22,43 +22,10 @@ import utils
 # Configuration
 ITERATIONS = 3
 
-class Monitor:
-    def __init__(self, handle):
-        self.handle = handle
-        self.gpu_mem_utilization = []
-        self.gpu_utilization = []
-        self.cpu_utilization = []
-        self.ram_utilization = []
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-
-    def start(self):
-        """Start the monitoring thread."""
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
-
-    def stop(self):
-        """Stop the monitoring thread safely."""
-        self.stop_event.set()
-        self.thread.join()
-
-    def run(self):
-        """Thread function to continuously collect monitoring data."""
-        print("Starting monitoring...")
-        while not self.stop_event.is_set():
-            with self.lock:
-                self.gpu_mem_utilization.append(nvmlDeviceGetMemoryInfo(self.handle).used / (1024*1024))
-                self.gpu_utilization.append(nvmlDeviceGetUtilizationRates(self.handle).gpu)
-                self.ram_utilization.append(psutil.virtual_memory().used / (1024*1024))
-                self.cpu_utilization.append(psutil.cpu_percent())
-            time.sleep(1)
-        print("Monitoring stopped.")
-
 # Load dataset
 ds = pd.read_csv("tabular/loan-prediction-subsample.csv", index_col=0).drop(['Id', 'Risk_Flag'], axis=1)
-# Increase dataset size to 1M samples, otherwise inference is too fast.
-ds = pd.concat([ds for _ in range(100)])
+# Increase dataset size to 10M samples, otherwise inference is too fast.
+ds = pd.concat([ds for _ in range(1000)])
 
 # Load ColumnTransformer.
 ct = joblib.load('tabular/column_transformer.pkl')
@@ -84,7 +51,7 @@ for t in range(ITERATIONS):
     total_generated_tokens = 0
 
     # Start monitoring
-    monitor = Monitor(handle)
+    monitor = utils.MonitorThread(handle)
     monitor.start()
 
     # Start energy measurement
@@ -114,10 +81,7 @@ for t in range(ITERATIONS):
                                                           datetime.now().astimezone().tzinfo).isoformat()
     res["model"] = "xgboost"
     res["processed_queries"] = len(ds)
-    res["gpu_memory_used_mb"] = monitor.gpu_mem_utilization
-    res["gpu_utilization_percent"] = monitor.gpu_utilization
-    res["cpu_memory_used_mb"] = monitor.ram_utilization
-    res["cpu_utilization_percent"] = monitor.cpu_utilization
+    res.update(monitor.get_all_metrics())
     results.append(res)
 
     # Save results

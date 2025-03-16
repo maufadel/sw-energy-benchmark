@@ -24,27 +24,6 @@ TEST_DURATION = 5*60 #secs
 # qps = monthly views / days / hours / min / secs
 LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60, 10000000 / 30 / 24 / 60 / 60]
 
-class MonitorThread(threading.Thread):
-    def __init__(self, handle):
-        super().__init__(daemon=True)
-        self.handle = handle
-        self.gpu_utilization = []
-        self.gpu_mem_utilization = []
-        self.cpu_utilization = []
-        self.ram_utilization = []
-        self.running = True
-
-    def run(self):
-        while self.running:
-            self.gpu_mem_utilization.append(nvmlDeviceGetMemoryInfo(self.handle).used / (1024 * 1024))
-            self.gpu_utilization.append(nvmlDeviceGetUtilizationRates(self.handle).gpu)
-            self.ram_utilization.append(psutil.virtual_memory().used / (1024 * 1024))
-            self.cpu_utilization.append(psutil.cpu_percent())
-            time.sleep(1)
-
-    def stop(self):
-        self.running = False
-
 class InferenceThread(threading.Thread):
     def __init__(self, llm, dataset, sampling_params, query_queue, result_lock):
         super().__init__(daemon=True)
@@ -107,7 +86,7 @@ if __name__ == "__main__":
     for lambda_qps in LAMBDA_QPS_ARRAY:
         for t in range(ITERATIONS):
             print(f"Start iteration {t} with lambda_qps {lambda_qps}")
-            monitor = MonitorThread(handle)
+            monitor = utils.MonitorThread(handle)
             inference_thread = InferenceThread(llm, dataset, sampling_params, query_queue, result_lock)
             query_generator = QueryGeneratorThread(query_queue, lambda_qps)
             meter = EnergyMeter(disk_avg_speed=1600 * 1e6, disk_active_power=6, 
@@ -134,11 +113,8 @@ if __name__ == "__main__":
             res["sampling_params"] = sampling_params.__dict__
             res["model"] = "microsoft/Phi-3.5-mini-instruct"
             res["lambda_qps"] = lambda_qps
+            res.update(monitor.get_all_metrics())
             res.update({
-                "gpu_memory_used_mb": monitor.gpu_mem_utilization,
-                "gpu_utilization_percent": monitor.gpu_utilization,
-                "cpu_memory_used_mb": monitor.ram_utilization,
-                "cpu_utilization_percent": monitor.cpu_utilization,
                 "total_generated_tokens": inference_thread.total_generated_tokens,
                 "processed_queries": inference_thread.processed_queries,
                 "queries_generated": query_generator.queries_generated,

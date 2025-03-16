@@ -57,13 +57,11 @@ for t in range(ITERATIONS):
 
     processed_queries = 0
     total_generated_tokens = 0
-    start_time = time.time()
 
-    gpu_utilization = []
-    gpu_mem_utilization = []
-    cpu_utilization = []
-    ram_utilization = []
-    
+    # Start monitoring
+    monitor = utils.MonitorThread(handle)
+    monitor.start()
+    start_time = time.time()
     meter.begin()
 
     # Process queries
@@ -80,17 +78,14 @@ for t in range(ITERATIONS):
         num_tokens = len(generated_text.split())  # Approximate token count
         total_generated_tokens += num_tokens
 
-        gpu_mem_utilization.append(nvmlDeviceGetMemoryInfo(handle).used / (1024*1024))
-        gpu_utilization.append(nvmlDeviceGetUtilizationRates(handle).gpu)
-        ram_utilization.append(psutil.virtual_memory().used / (1024*1024))
-        cpu_utilization.append(psutil.cpu_percent())
-
         print(f"Queries processed: {i}, total tokens: {total_generated_tokens}\n")
 
         if time.time() - start_time >= MAX_TEST_DURATION:
             print(f"Maximum test duration of {MAX_TEST_DURATION} seconds reached. Stopping.")
             break
 
+    # Stop monitoring
+    monitor.stop()
     meter.end()
     print("Simulation complete.")
 
@@ -104,10 +99,7 @@ for t in range(ITERATIONS):
     res["model"] = "microsoft/Phi-3.5-mini-instruct"
     res["processed_queries"] = len(ds)
     res["total_generated_tokens"] = total_generated_tokens
-    res["gpu_memory_used_mb"] = gpu_mem_utilization
-    res["gpu_utilization_percent"] = gpu_utilization
-    res["cpu_memory_used_mb"] = ram_utilization
-    res["cpu_utilization_percent"] = cpu_utilization
+    res.update(monitor.get_all_metrics())
     results.append(res)
 
     # Save results

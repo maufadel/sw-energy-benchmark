@@ -66,13 +66,6 @@ python tabular/tabular_batch.py
 echo "[$(date)] Running tabular_server.py..."
 python tabular/tabular_server.py
 
-# ---------------------------------------
-# Run Energy-Languages benchmark.
-echo "[$(date)] Running Energy-Languages benchmark..."
-
-# Run the Python script with the 'measure' argument
-#python energy-languages/el_benchmark.py
-
 # Deactivate the virtual environment at the end
 echo "[$(date)] Deactivating virtual environment..."
 deactivate

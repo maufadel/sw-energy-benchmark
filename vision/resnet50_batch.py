@@ -19,39 +19,6 @@ import utils
 # Configuration
 ITERATIONS = 5
 
-class Monitor:
-    def __init__(self, handle):
-        self.handle = handle
-        self.gpu_mem_utilization = []
-        self.gpu_utilization = []
-        self.cpu_utilization = []
-        self.ram_utilization = []
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-
-    def start(self):
-        """Start the monitoring thread."""
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
-
-    def stop(self):
-        """Stop the monitoring thread safely."""
-        self.stop_event.set()
-        self.thread.join()
-
-    def run(self):
-        """Thread function to continuously collect monitoring data."""
-        print("Starting monitoring...")
-        while not self.stop_event.is_set():
-            with self.lock:
-                self.gpu_mem_utilization.append(nvmlDeviceGetMemoryInfo(self.handle).used / (1024*1024))
-                self.gpu_utilization.append(nvmlDeviceGetUtilizationRates(self.handle).gpu)
-                self.ram_utilization.append(psutil.virtual_memory().used / (1024*1024))
-                self.cpu_utilization.append(psutil.cpu_percent())
-            time.sleep(0.1)
-        print("Monitoring stopped.")
-
 # Load dataset
 dataset = load_dataset("Kaludi/data-food-classification", trust_remote_code=True)
 images = dataset["train"]["image"][:1000]
@@ -79,7 +46,7 @@ for t in range(ITERATIONS):
     predicted_labels = []
 
     # Start monitoring
-    monitor = Monitor(handle)
+    monitor = utils.MonitorThread(handle, secs_between_samples=0.1)
     monitor.start()
 
     # Start energy measurement
@@ -117,10 +84,7 @@ for t in range(ITERATIONS):
                                                           datetime.now().astimezone().tzinfo).isoformat()
     res["model"] = "microsoft/resnet-50"
     res["processed_queries"] = len(predicted_labels)
-    res["gpu_memory_used_mb"] = monitor.gpu_mem_utilization
-    res["gpu_utilization_percent"] = monitor.gpu_utilization
-    res["cpu_memory_used_mb"] = monitor.ram_utilization
-    res["cpu_utilization_percent"] = monitor.cpu_utilization
+    res.update(monitor.get_all_metrics())
     results.append(res)
 
     # Save results
