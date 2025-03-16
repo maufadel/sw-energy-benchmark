@@ -13,7 +13,7 @@ MAX_TEST_DURATION = 5*60
 # Average monthly views per website 375773, top 0.5% websites have more than 10M monthly views.
 # Source: https://blog.hubspot.com/website/web-traffic-analytics-report
 # qps = monthly views / days / hours / min / secs
-LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60, ]
+LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60,
                     10000000 / 30 / 24 / 60 / 60]
 
 ################### CLASSES #####################
