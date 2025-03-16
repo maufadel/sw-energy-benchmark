@@ -17,7 +17,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
 # Configuration
-ITERATIONS = 5
+ITERATIONS = utils.ITERATIONS
 
 # Load dataset
 dataset = load_dataset("Kaludi/data-food-classification", trust_remote_code=True)

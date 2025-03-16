@@ -16,7 +16,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
 # Configuration
-ITERATIONS = 3
+ITERATIONS = utils.ITERATIONS
 
 # Load dataset
 ds = load_dataset("launch/open_question_type")["train"]["question"][:1000]

@@ -20,7 +20,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
 # Configuration
-ITERATIONS = 3
+ITERATIONS = utils.ITERATIONS
 
 # Load dataset
 ds = pd.read_csv("tabular/loan-prediction-subsample.csv", index_col=0).drop(['Id', 'Risk_Flag'], axis=1)

@@ -1,7 +1,22 @@
-from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlShutdown, nvmlDeviceGetTemperature
+from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlShutdown, nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates, nvmlDeviceGetMemoryInfo
 import time
 import threading
 import psutil
+
+################ GLOBAL CONSTANTS ################
+
+# Number of times that each experiment will be repeated.
+ITERATIONS = 3
+# Seconds for which server experiments will run for and timeout for batch experiments.
+MAX_TEST_DURATION = 5*60
+# For server experiments, we simulate a Poisson process, with λ set to queries per second (qps).
+# Average monthly views per website 375773, top 0.5% websites have more than 10M monthly views.
+# Source: https://blog.hubspot.com/website/web-traffic-analytics-report
+# qps = monthly views / days / hours / min / secs
+LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60, ]
+                    10000000 / 30 / 24 / 60 / 60]
+
+################### CLASSES #####################
 
 class MonitorThread(threading.Thread):
     def __init__(self, handle, secs_between_samples=1):
@@ -33,6 +48,8 @@ class MonitorThread(threading.Thread):
         all_metrics["cpu_utilization_percent"] = self.cpu_utilization
 
         return all_metrics
+
+################ STATIC METHODS ################
 
 def wait_for_gpu_cooldown(handle, target_temp=50, check_interval=5):
     """Wait until the GPU temperature drops below the target temperature."""

@@ -33,7 +33,7 @@ echo -e "\n" >> results/system_info.txt  # Add a newline
 # ---------------------------------------
 # Install Python virtual environment.
 echo "[$(date)] Creating Python virtual environment..."
-python3 -m venv venv
+python -m venv venv
 
 echo "[$(date)] Activating virtual environment..."
 source venv/bin/activate

@@ -16,13 +16,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
 # CONSTANTS
-ITERATIONS = 3
-TEST_DURATION = 5*60 #secs
+ITERATIONS = utils.ITERATIONS
+TEST_DURATION = utils.MAX_TEST_DURATION
 # We simulate a Poisson process, with λ set to queries per second (qps).
-# Average monthly views per website 375773, top 0.5% websites have more than 10M monthly views.
-# Source: https://blog.hubspot.com/website/web-traffic-analytics-report
-# qps = monthly views / days / hours / min / secs
-LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60, 10000000 / 30 / 24 / 60 / 60]
+LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
 
 class InferenceThread(threading.Thread):
     def __init__(self, llm, dataset, sampling_params, query_queue, result_lock):
