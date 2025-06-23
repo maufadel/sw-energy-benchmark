@@ -24,8 +24,8 @@ ITERATIONS = utils.ITERATIONS
 
 # Load dataset
 ds = pd.read_csv("tabular/loan-prediction-subsample.csv", index_col=0).drop(['Id', 'Risk_Flag'], axis=1)
-# Increase dataset size to 10M samples, otherwise inference is too fast.
-ds = pd.concat([ds for _ in range(1000)])
+# Increase dataset size to 1M samples, otherwise inference is too fast.
+ds = pd.concat([ds for _ in range(100)])
 
 # Load ColumnTransformer.
 ct = joblib.load('tabular/column_transformer.pkl')
