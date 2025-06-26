@@ -1,6 +1,14 @@
 # ML Energy Benchmark
 TODO: description
 
+## Install
+Clone repo with submodules (for EnergyMeter):
+```
+git clone https://github.com/maufadel/EnergyMeter.git
+git submodule update --init --recursive
+```
+Run: `sudo apt-get install -y bpftrace` to install bpftrace, used by EnergyMeter to run.
+
 ## How to use
 Simply run: `bash run_benchmark.sh`
 
