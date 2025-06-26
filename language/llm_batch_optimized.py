@@ -93,7 +93,7 @@ for model_name in MODELS:
             res["measurement_duration"] = meter.duration
             res["measurement_timestamp"] = meter.start_time
             res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
-                                                                  datetime.now().astimezone().tzinfo).isoformat()
+                                                                 datetime.now().astimezone().tzinfo).isoformat()
             res["sampling_params"] = sampling_params.__dict__
             res["model"] = model_name
             res["processed_queries"] = len(ds)

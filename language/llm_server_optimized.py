@@ -143,7 +143,7 @@ if __name__ == "__main__":
                     res["measurement_duration"] = meter.duration
                     res["measurement_timestamp"] = meter.start_time
                     res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
-                                                                          datetime.now().astimezone().tzinfo).isoformat()
+                                                                         datetime.now().astimezone().tzinfo).isoformat()
                     res["sampling_params"] = sampling_params.__dict__
                     res["model"] = model_name
                     res["lambda_qps"] = lambda_qps
@@ -156,7 +156,6 @@ if __name__ == "__main__":
                     results.append(res)
                     pd.DataFrame(results).to_csv("results/llm_server_optimized_results.csv")
                     pd.DataFrame(query_log).to_csv("results/llm_server_optimized_details.csv")
-    
                     del inference_thread
                     del query_generator
     

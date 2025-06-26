@@ -47,24 +47,24 @@ pip install -r requirements.txt
 # Run the Python scripts for language
 echo "[$(date)] Running llm_server_optimized.py..."
 python language/llm_server_optimized.py
-echo "[$(date)] Running llm_batch_vanilla.py..."
-python language/llm_batch_vanilla.py
+#echo "[$(date)] Running llm_batch_vanilla.py..."
+#python language/llm_batch_vanilla.py
 echo "[$(date)] Running llm_batch_optimized.py..."
 python language/llm_batch_optimized.py
 
 # ---------------------------------------
 # Run the Python scripts for vision
-echo "[$(date)] Running resnet50_batch.py..."
-python vision/resnet50_batch.py
-echo "[$(date)] Running resnet50_server.py..."
-python vision/resnet50_server.py
+#echo "[$(date)] Running resnet50_batch.py..."
+#python vision/resnet50_batch.py
+#echo "[$(date)] Running resnet50_server.py..."
+#python vision/resnet50_server.py
 
 # ---------------------------------------
 # Run the Python scripts for tabular
-echo "[$(date)] Running tabular_batch.py..."
-python tabular/tabular_batch.py
-echo "[$(date)] Running tabular_server.py..."
-python tabular/tabular_server.py
+#echo "[$(date)] Running tabular_batch.py..."
+#python tabular/tabular_batch.py
+#echo "[$(date)] Running tabular_server.py..."
+#python tabular/tabular_server.py
 
 # Deactivate the virtual environment at the end
 echo "[$(date)] Deactivating virtual environment..."
