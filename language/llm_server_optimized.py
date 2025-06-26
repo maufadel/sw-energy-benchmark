@@ -50,7 +50,7 @@ class InferenceThread(threading.Thread):
                     metadata.append(item)
                     self.query_queue.task_done()
 
-            if queries:
+            if len(queries) > 0:
                 start_time = datetime.now()
                 outputs = self.llm.generate([self.dataset[q % len(self.dataset)] for q in queries], 
                                             self.sampling_params)

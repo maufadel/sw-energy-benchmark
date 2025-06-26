@@ -13,6 +13,9 @@ import os
 # Set access token for HF.
 os.environ["HF_TOKEN"] = ""
 
+# To avoid any issues.
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # CUDA devices that will be used for inference. For multiple devices: "0,1".
 CUDA_VISIBLE_DEVICES = "0"
 GPU_INDICES = list(map(int, CUDA_VISIBLE_DEVICES.split(",")))
