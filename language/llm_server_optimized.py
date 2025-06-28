@@ -51,26 +51,30 @@ class InferenceThread(threading.Thread):
                     self.query_queue.task_done()
 
             if len(queries) > 0:
-                start_time = datetime.now()
-                outputs = self.llm.generate([self.dataset[q % len(self.dataset)] for q in queries], 
-                                            self.sampling_params)
-                end_time = datetime.now()
-
-                with self.result_lock:
-                    for output, meta in zip(outputs, metadata):
-                        response_text = output.outputs[0].text
-                        self.total_generated_tokens += len(response_text.split())
-                        self.processed_queries += 1
-
-                        self.query_log.append({
-                            "query_id": meta["query"],
-                            "model": meta["model"],
-                            "lambda_qps": meta["lambda_qps"],
-                            "queued_time": meta["queued_time"].isoformat(),
-                            "inference_start": start_time.isoformat(),
-                            "inference_end": end_time.isoformat(),
-                            "response_text": response_text,
-                        })
+                try:
+                    start_time = datetime.now()
+                    outputs = self.llm.generate([self.dataset[q % len(self.dataset)] for q in queries], 
+                                                self.sampling_params)
+                    end_time = datetime.now()
+    
+                    with self.result_lock:
+                        for output, meta in zip(outputs, metadata):
+                            response_text = output.outputs[0].text
+                            self.total_generated_tokens += len(response_text.split())
+                            self.processed_queries += 1
+    
+                            self.query_log.append({
+                                "query_id": meta["query"],
+                                "model": meta["model"],
+                                "lambda_qps": meta["lambda_qps"],
+                                "queued_time": meta["queued_time"].isoformat(),
+                                "inference_start": start_time.isoformat(),
+                                "inference_end": end_time.isoformat(),
+                                "response_text": response_text,
+                            })
+                except Exception as e:
+                    print("Error when doing inference", e)
+                    print(traceback(e))
 
     def stop(self):
         self.running = False
@@ -132,9 +136,13 @@ if __name__ == "__main__":
                     meter.begin()
     
                     time.sleep(TEST_DURATION)
-    
+
+                    # Stop threads and wait for them to finish.
                     query_generator.stop()
                     inference_thread.stop()
+                    query_generator.join()
+                    inference_thread.join()
+                    
                     monitor.stop()
                     meter.end()
     
