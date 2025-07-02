@@ -127,8 +127,7 @@ if __name__ == "__main__":
     
                     inference_thread = InferenceThread(llm, dataset, sampling_params, query_queue, result_lock, query_log)
                     query_generator = QueryGeneratorThread(query_queue, lambda_qps, model_name)
-                    meter = EnergyMeter(disk_avg_speed=1600 * 1e6, disk_active_power=6, 
-                                        disk_idle_power=1.42, label="Chatbot", include_idle=True)
+                    meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
     
                     monitor.start()
                     inference_thread.start()

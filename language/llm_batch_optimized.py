@@ -46,10 +46,7 @@ for model_name in MODELS:
             print(f"Start iteration {t} for model {model_name}")
     
             # Initialize energy meter
-            meter = EnergyMeter(disk_avg_speed=1600 * 1e6, 
-                                disk_active_power=6, 
-                                disk_idle_power=1.42, 
-                                label="Batch LLM", include_idle=True)
+            meter = EnergyMeter(label="Batch LLM", include_idle=True, ignore_disk=True)
     
             processed_queries = 0
             total_generated_tokens = 0
