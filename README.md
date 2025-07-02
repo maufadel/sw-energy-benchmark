@@ -8,7 +8,6 @@ git clone https://github.com/maufadel/sw-energy-benchmark.git
 cd sw-energy-benchmark
 git submodule update --init --recursive
 ```
-Run: `sudo apt-get install -y bpftrace` to install bpftrace, used by EnergyMeter to run.
 
 EnergyMeter is used to track the energy used by the CPU, main memory, GPU and disk. The CPU and main memory are tracked through RAPL, so if RAPL is not available, only disk and GPU will be reported.
 
