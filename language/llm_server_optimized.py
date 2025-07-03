@@ -116,7 +116,7 @@ if __name__ == "__main__":
         llm_loaded = False
         try:
             print(f"Loading model {model_name}")
-            llm = LLM(model=model_name, dtype="auto")
+            llm = utils.create_vllm(model_name)
             llm_loaded = True
             for lambda_qps in LAMBDA_QPS_ARRAY:
                 for t in range(ITERATIONS):

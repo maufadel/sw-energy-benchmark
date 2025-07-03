@@ -39,7 +39,7 @@ for model_name in MODELS:
     llm_loaded = False
     try:
         print(f"Loading model {model_name}")
-        llm = LLM(model=model_name, dtype="auto")
+        llm = utils.create_vllm(model_name)
         llm_loaded = True
         
         for t in range(ITERATIONS):

@@ -8,6 +8,8 @@ import threading
 import psutil
 import os
 
+from vllm import LLM, SamplingParams
+
 ################ GLOBAL CONSTANTS ################
 
 # Set access token for HF.
@@ -32,18 +34,18 @@ LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60,
                     10000000 / 30 / 24 / 60 / 60]
 
 LLM_MODELS = [
-    "Qwen/Qwen2.5-0.5B-Instruct",
-    "Qwen/Qwen2.5-1.5B-Instruct",
-    "Qwen/Qwen2.5-3B-Instruct",
-    "Qwen/Qwen2.5-7B-Instruct",
-    "meta-llama/Llama-3.1-8B-Instruct", # max_model_len == 1024*10
+    #"Qwen/Qwen2.5-0.5B-Instruct",
+    #"Qwen/Qwen2.5-1.5B-Instruct",
+    #"Qwen/Qwen2.5-3B-Instruct",
+    #"Qwen/Qwen2.5-7B-Instruct",
+    #"meta-llama/Llama-3.1-8B-Instruct", # max_model_len == 1024*10
     "meta-llama/Llama-3.2-3B-Instruct",
-    "meta-llama/Llama-3.2-1B-Instruct",
-    "google/gemma-2-2b-it",      
-    "google/gemma-2-9b-it",      
+    #"meta-llama/Llama-3.2-1B-Instruct",
+    #"google/gemma-2-2b-it",      
+    #"google/gemma-2-9b-it",      
     #"google/gemma-3-1b-it",   
-    "mistralai/Mistral-7B-Instruct-v0.3", # max_model_len == 1024*10
-    "deepseek-ai/deepseek-llm-7b-chat"
+    #"mistralai/Mistral-7B-Instruct-v0.3", # max_model_len == 1024*10
+    #"deepseek-ai/deepseek-llm-7b-chat"
 ]
 
 ################### CLASSES #####################
@@ -115,3 +117,9 @@ def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
         gpu_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
 
     print(f"GPU cooled down to {gpu_temp}°C. Continue.")
+
+def create_vllm(model_name):
+    if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
+        return LLM(model=model_name, dtype="auto", max_model_len=1024*10)
+    else:
+        return LLM(model=model_name, dtype="auto")
