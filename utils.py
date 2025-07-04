@@ -7,13 +7,14 @@ import time
 import threading
 import psutil
 import os
+from dotenv import load_dotenv
 
 from vllm import LLM, SamplingParams
 
 ################ GLOBAL CONSTANTS ################
 
 # Set access token for HF.
-os.environ["HF_TOKEN"] = ""
+load_dotenv()
 
 # To avoid any issues.
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

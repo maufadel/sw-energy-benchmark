@@ -13,6 +13,7 @@ from energymeter import EnergyMeter
 from datasets import load_dataset
 import sys
 import os
+import argparse
 from copy import deepcopy
 import traceback
 
@@ -112,6 +113,17 @@ if __name__ == "__main__":
     sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
     dataset = load_dataset("launch/open_question_type")['train']['question']
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("result_folder", type=str, nargs='?', default="results",
+                    help="Path to the result folder (default: 'results')")
+    args = parser.parse_args()
+    result_folder_path = args.result_folder
+    if not os.path.exists(result_folder_path):
+        os.makedirs(result_folder_path)
+        print(f"Created directory: {result_folder_path}")
+    
+    print(f"The results will be saved in: {result_folder_path}")
+
     for model_name in MODELS:
         llm_loaded = False
         try:
@@ -161,8 +173,8 @@ if __name__ == "__main__":
                         "queries_generated": query_generator.queries_generated,
                     })
                     results.append(res)
-                    pd.DataFrame(results).to_csv("results/llm_server_optimized_results.csv")
-                    pd.DataFrame(query_log).to_csv("results/llm_server_optimized_details.csv")
+                    pd.DataFrame(results).to_csv(result_folder_path+"/llm_server_optimized_results.csv")
+                    pd.DataFrame(query_log).to_csv(result_folder_path+"/llm_server_optimized_details.csv")
                     del inference_thread
                     del query_generator
     
