@@ -126,7 +126,14 @@ def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
     print(f"GPU cooled down to {gpu_temp}°C. Continue.")
 
 def create_vllm(model_name):
-    if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
-        return LLM(model=model_name, dtype="auto", max_model_len=1024*10)
-    else:
-        return LLM(model=model_name, dtype="auto")
+    try:
+        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
+            return LLM(model=model_name, dtype="auto", max_model_len=1024*10)
+        else:
+            return LLM(model=model_name, dtype="auto")
+    except Exception as e:
+        print("Error loading model", model_name, " - exception:", e, ". Will try loading with float16")
+        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
+            return LLM(model=model_name, dtype="float16", max_model_len=1024*10)
+        else:
+            return LLM(model=model_name, dtype="float16")
