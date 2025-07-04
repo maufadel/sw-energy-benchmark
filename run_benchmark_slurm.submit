@@ -1,0 +1,92 @@
+#!/bin/bash
+#SBATCH --time=600
+#SBATCH --job-name=energy_bench
+#SBATCH --ntasks=1
+#SBATCH --nodes=1
+#SBATCH --account=init
+#SBATCH --gres=gpu:1
+#SBATCH --output=/cluster/home/fues/log/%j_%N__energy_bench.log
+#SBATCH --error=/cluster/home/fues/log/%j_%N__energy_bench.err
+
+# Set the root folder for the project
+ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
+
+# --- Script Start ---
+# SLURM provides $SLURM_JOB_ID as a unique identifier for each job.
+echo "[$(date)] Starting Job ID: $SLURM_JOB_ID"
+
+# --- Create a unique results directory for this specific job ---
+# This prevents multiple jobs from overwriting each other's results.
+JOB_RESULTS_FOLDER="$ROOT_FOLDER/results/$SLURM_JOB_ID"
+mkdir -p "$JOB_RESULTS_FOLDER"
+echo "[$(date)] Results will be stored in: $JOB_RESULTS_FOLDER"
+
+# Define the path for the system info file within the unique job folder
+RESULTS_FILE="$JOB_RESULTS_FOLDER/system_info.txt"
+
+# ---------------------------------------
+# Register system info.
+# ---------------------------------------
+echo "[$(date)] Registering system info..."
+
+# The > operator creates and overwrites the file with the first command's output.
+# The >> operator appends the output of subsequent commands to the same file.
+
+echo "lscpu" > "$RESULTS_FILE"
+lscpu >> "$RESULTS_FILE"
+echo -e "\n" >> "$RESULTS_FILE"
+
+echo "nvidia-smi" >> "$RESULTS_FILE"
+nvidia-smi >> "$RESULTS_FILE"
+echo -e "\n" >> "$RESULTS_FILE"
+
+echo "free -h" >> "$RESULTS_FILE"
+free -h >> "$RESULTS_FILE"
+echo -e "\n" >> "$RESULTS_FILE"
+
+echo "df -h" >> "$RESULTS_FILE"
+df -h >> "$RESULTS_FILE"
+echo -e "\n" >> "$RESULTS_FILE"
+
+echo "[$(date)] System info registered in $RESULTS_FILE"
+
+# ---------------------------------------
+# Activate virtual environment and run Python script
+# ---------------------------------------
+echo "[$(date)] Activating virtual environment..."
+
+# Correctly source the venv activate script
+source "$ROOT_FOLDER/.venv/bin/activate"
+
+echo "[$(date)] Ensuring all dependencies are installed..."
+uv pip install -r "$ROOT_FOLDER/requirements.txt"
+
+echo "[$(date)] Running Python scripts..."
+
+# ---------------------------------------
+# Run the Python scripts for language
+# You can redirect the output of each script to a specific file in your job's result folder
+echo "[$(date)] Running llm_server_optimized.py..."
+python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
+
+
+echo "[$(date)] Running llm_batch_optimized.py..."
+python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+
+# ---------------------------------------
+# Run the Python scripts for vision
+#echo "[$(date)] Running resnet50_batch.py..."
+#python vision/resnet50_batch.py > "$JOB_RESULTS_FOLDER/resnet50_batch.out"
+#echo "[$(date)] Running resnet50_server.py..."
+#python vision/resnet50_server.py > "$JOB_RESULTS_FOLDER/resnet50_server.out"
+
+# ---------------------------------------
+# Run the Python scripts for tabular
+#echo "[$(date)] Running tabular_batch.py..."
+#python tabular/tabular_batch.py > "$JOB_RESULTS_FOLDER/tabular_batch.out"
+#echo "[$(date)] Running tabular_server.py..."
+#python tabular/tabular_server.py > "$JOB_RESULTS_FOLDER/tabular_server.out"
+
+
+echo "[$(date)] Job Finished"
+
