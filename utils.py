@@ -45,9 +45,9 @@ LLM_MODELS = [
     "meta-llama/Llama-3.2-1B-Instruct",
     "google/gemma-2-2b-it",      
     "google/gemma-2-9b-it",   
-    "google/gemma-2-27b-it"
+    "google/gemma-2-27b-it",
     "mistralai/Mistral-7B-Instruct-v0.3", # max_model_len == 1024*10
-    "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+    "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
     "deepseek-ai/deepseek-llm-7b-chat", 
     #"Qwen/Qwen3-30B-A3B", 
     #"meta-llama/Llama-4-Scout-17B-16E-Instruct", 
