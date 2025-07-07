@@ -10,6 +10,7 @@
 
 # Set the root folder for the project
 ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
+UV_PATH = "/cluster/home/fues/.local/bin/uv"
 
 # --- Script Start ---
 # SLURM provides $SLURM_JOB_ID as a unique identifier for each job.
@@ -59,7 +60,7 @@ echo "[$(date)] Activating virtual environment..."
 source "$ROOT_FOLDER/.venv/bin/activate"
 
 echo "[$(date)] Ensuring all dependencies are installed..."
-uv pip install -r "$ROOT_FOLDER/requirements.txt"
+"$UV_PATH -r" "$ROOT_FOLDER/requirements.txt"
 
 echo "[$(date)] Running Python scripts..."
 
