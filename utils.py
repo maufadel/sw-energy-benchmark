@@ -7,11 +7,16 @@ import time
 import threading
 import psutil
 import os
+import yaml
 from dotenv import load_dotenv
 
 from vllm import LLM, SamplingParams
 
 ################ GLOBAL CONSTANTS ################
+
+# Load config from YAML file
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
 # Set access token for HF.
 load_dotenv()
@@ -20,40 +25,17 @@ load_dotenv()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # CUDA devices that will be used for inference. For multiple devices: "0,1".
-CUDA_VISIBLE_DEVICES = "0"
+CUDA_VISIBLE_DEVICES = config["CUDA_VISIBLE_DEVICES"]
 GPU_INDICES = list(map(int, CUDA_VISIBLE_DEVICES.split(",")))
 
 # Number of times that each experiment will be repeated.
-ITERATIONS = 5
+ITERATIONS = config["ITERATIONS"]
 # Seconds for which server experiments will run for and timeout for batch experiments.
-MAX_TEST_DURATION = 5 * 60
+MAX_TEST_DURATION = config["MAX_TEST_DURATION"]
 # For server experiments, we simulate a Poisson process, with λ set to queries per second (qps).
-# Average monthly views per website 375773, top 0.5% websites have more than 10M monthly views.
-# Source: https://blog.hubspot.com/website/web-traffic-analytics-report
-# qps = monthly views / days / hours / min / secs
-LAMBDA_QPS_ARRAY = [375773 / 30 / 24 / 60 / 60,
-                    10000000 / 30 / 24 / 60 / 60]
+LAMBDA_QPS_ARRAY = config["LAMBDA_QPS_ARRAY"]
 
-LLM_MODELS = [
-    "Qwen/Qwen2.5-0.5B-Instruct",
-    "Qwen/Qwen2.5-1.5B-Instruct",
-    "Qwen/Qwen2.5-3B-Instruct",
-    "Qwen/Qwen2.5-7B-Instruct",
-    "Qwen/Qwen3-32B",
-    "meta-llama/Llama-3.1-8B-Instruct", # max_model_len == 1024*10
-    "meta-llama/Llama-3.2-3B-Instruct",
-    "meta-llama/Llama-3.2-1B-Instruct",
-    "google/gemma-2-2b-it",      
-    "google/gemma-2-9b-it",   
-    "google/gemma-2-27b-it",
-    "mistralai/Mistral-7B-Instruct-v0.3", # max_model_len == 1024*10
-    "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-    "deepseek-ai/deepseek-llm-7b-chat", 
-    #"Qwen/Qwen3-30B-A3B", 
-    #"meta-llama/Llama-4-Scout-17B-16E-Instruct", 
-    #"meta-llama/Llama-4-Maverick-17B-128E-Instruct", 
-    #"mistralai/Mixtral-8x7B-Instruct-v0.1"
-]
+LLM_MODELS = config["LLM_MODELS"]
 
 ################### CLASSES #####################
 
