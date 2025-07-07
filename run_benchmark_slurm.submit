@@ -10,11 +10,23 @@
 
 # Set the root folder for the project
 ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
-UV_PATH = "/cluster/home/fues/.local/bin/uv"
+UV_PATH="/cluster/home/fues/.local/bin/uv"
 
 # --- Script Start ---
 # SLURM provides $SLURM_JOB_ID as a unique identifier for each job.
 echo "[$(date)] Starting Job ID: $SLURM_JOB_ID"
+
+# Create a job-specific virtual environment in a temporary directory
+VENV_DIR="/tmp/sw-energy-benchmark-venv-$SLURM_JOB_ID"
+mkdir -p "$VENV_DIR"
+"$UV_PATH" venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+
+# Set up a trap to clean up the virtual environment on exit
+trap 'rm -rf -- "$VENV_DIR"' EXIT
+
+# Install dependencies into the virtual environment
+"$UV_PATH" pip sync "$ROOT_FOLDER/requirements.txt"
 
 # --- Create a unique results directory for this specific job ---
 # This prevents multiple jobs from overwriting each other's results.
@@ -52,27 +64,14 @@ echo -e "\n" >> "$RESULTS_FILE"
 echo "[$(date)] System info registered in $RESULTS_FILE"
 
 # ---------------------------------------
-# Activate virtual environment and run Python script
-# ---------------------------------------
-echo "[$(date)] Activating virtual environment..."
-
-# Correctly source the venv activate script
-source "$ROOT_FOLDER/.venv/bin/activate"
-
-echo "[$(date)] Ensuring all dependencies are installed..."
-"$UV_PATH -r" "$ROOT_FOLDER/requirements.txt"
-
-echo "[$(date)] Running Python scripts..."
-
-# ---------------------------------------
 # Run the Python scripts for language
 # You can redirect the output of each script to a specific file in your job's result folder
 echo "[$(date)] Running llm_server_optimized.py..."
-python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
+srun python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
 
 
 echo "[$(date)] Running llm_batch_optimized.py..."
-python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
 
 # ---------------------------------------
 # Run the Python scripts for vision
