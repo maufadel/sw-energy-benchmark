@@ -44,7 +44,7 @@ source .venv/bin/activate
 
 # Install requirements
 echo "[$(date)] Installing requirements..."
-uv pip sync requirements.txt
+uv pip install -r requirements.txt
 
 # ---------------------------------------
 # Run the Python scripts for language
