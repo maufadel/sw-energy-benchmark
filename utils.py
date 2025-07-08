@@ -109,16 +109,8 @@ def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
     print(f"GPU cooled down to {gpu_temp}°C. Continue.")
 
 def create_vllm(model_name):
-    # Check GPU architecture to determine the best dtype
-    major, _ = torch.cuda.get_device_capability()
-    if major >= 8:
-        # For Ampere, Hopper, and newer architectures, bfloat16 is preferred
-        dtype = "bfloat16"
-    else:
-        # For older architectures like Volta, float16 is the safe choice
-        dtype = "float16"
-
-    print(f"Using dtype '{dtype}' for model {model_name} based on GPU compute capability {major}.")
+    dtype = "auto"
+    print(f"Using dtype '{dtype}' for model {model_name}.")
     
     try:
         if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
