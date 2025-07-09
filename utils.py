@@ -112,14 +112,7 @@ def create_vllm(model_name):
     dtype = "auto"
     print(f"Using dtype '{dtype}' for model {model_name}.")
     
-    try:
-        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
-            return LLM(model=model_name, dtype=dtype, max_model_len=1024*10)
-        else:
-            return LLM(model=model_name, dtype=dtype)
-    except Exception as e:
-        print(f"Error loading model {model_name} with dtype '{dtype}' - exception: {e}. Will try loading with float16.")
-        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
-            return LLM(model=model_name, dtype="float16", max_model_len=1024*10)
-        else:
-            return LLM(model=model_name, dtype="float16")
+    if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
+        return LLM(model=model_name, dtype=dtype, max_model_len=1024*10)
+    else:
+        return LLM(model=model_name, dtype=dtype)
