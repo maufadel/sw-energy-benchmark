@@ -27,6 +27,24 @@ TEST_DURATION = utils.MAX_TEST_DURATION
 LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
 MODELS = utils.LLM_MODELS
 
+
+import signal
+import traceback
+
+def signal_handler(signum, frame):
+    """
+    This function is called when the script receives a signal.
+    It prints the current stack trace and then exits.
+    """
+    print(f"Received signal: {signum}", file=sys.stderr)
+    print("Printing stack traceback...", file=sys.stderr)
+    traceback.print_stack(frame, file=sys.stderr)
+    sys.exit(1)
+
+# Register the signal handler for SIGUSR1
+signal.signal(signal.SIGUSR1, signal_handler)
+
+
 class InferenceThread(threading.Thread):
     def __init__(self, llm, dataset, sampling_params, query_queue, result_lock, query_log):
         super().__init__(daemon=True)
@@ -114,9 +132,13 @@ if __name__ == "__main__":
     dataset = load_dataset("launch/open_question_type")['train']['question']
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to the config YAML file.")
     parser.add_argument("result_folder", type=str, nargs='?', default="results",
                     help="Path to the result folder (default: 'results')")
     args = parser.parse_args()
+
+    # Load config
+    utils.load_config(args.config)
     result_folder_path = args.result_folder
     if not os.path.exists(result_folder_path):
         os.makedirs(result_folder_path)
