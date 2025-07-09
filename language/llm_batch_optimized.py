@@ -14,7 +14,6 @@ from energymeter import EnergyMeter
 from datasets import load_dataset
 import sys
 import os
-import argparse
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
@@ -45,6 +44,7 @@ if not os.path.exists(result_folder_path):
     print(f"Created directory: {result_folder_path}")
 
 print(f"The results will be saved in: {result_folder_path}")
+
 
 # Run benchmarking for each model
 for model_name in MODELS:
