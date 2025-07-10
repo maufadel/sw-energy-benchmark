@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --account=init
 #SBATCH --gres=gpu:1
-#SBATCH --output=/cluster/home/fues/log/%j_%N__energy_bench.log
-#SBATCH --error=/cluster/home/fues/log/%j_%N__energy_bench.err
+#SBATCH --output=/cluster/home/fues/sw-energy-benchmark/log/%j_%N__energy_bench.out
+#SBATCH --error=/cluster/home/fues/sw-energy-benchmark/log/%j_%N__energy_bench.err
 
 # Set the root folder for the project
 ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
@@ -22,6 +22,38 @@ mkdir -p "$VENV_DIR"
 "$UV_PATH" venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
+# Set up a trap to clean up the virtual environment on exit
+trap 'rm -rf -- "$VENV_DIR"' EXIT
+
+# Install dependencies into the virtual environment
+#"$UV_PATH" pip sync "$ROOT_FOLDER/requirements.txt"
+
+"$UV_PATH" pip install -r "$ROOT_FOLDER/requirements.txt"
+
+# Discover the correct library path within the venv
+# --- START DEBUGGING BLOCK ---
+echo "--- [DEBUG] Verifying library installation ---"
+
+# Define the site-packages path for easier access
+SITE_PACKAGES="$VENV_DIR/lib/python3.11/site-packages"
+
+echo "[DEBUG] VENV_DIR is: $VENV_DIR"
+echo "[DEBUG] Searching for libcusparseLt.so.0 in the entire venv..."
+
+# Search the entire virtual environment for the missing library
+find "$VENV_DIR" -name "libcusparseLt.so.0"
+
+echo "[DEBUG] Listing contents of the expected directory..."
+# List the contents of the directory where the library SHOULD be
+ls -l "$SITE_PACKAGES/nvidia/cusparse/lib/"
+
+echo "[DEBUG] Current LD_LIBRARY_PATH is: $LD_LIBRARY_PATH"
+echo "--- [DEBUG] End of verification ---"
+
+
+export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cusparselt/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
+
+
 # Set up a job-specific Hugging Face home to isolate model downloads
 HF_HOME_DIR="/tmp/hf_home-$SLURM_JOB_ID"
 mkdir -p "$HF_HOME_DIR"
@@ -30,8 +62,6 @@ export HF_HOME="$HF_HOME_DIR"
 # Set up a trap to clean up the virtual environment and HF home on exit
 trap 'rm -rf -- "$VENV_DIR" "$HF_HOME_DIR"' EXIT
 
-# Install dependencies into the virtual environment
-"$UV_PATH" pip sync "$ROOT_FOLDER/requirements.txt"
 
 # --- Create a unique results directory for this specific job ---
 # This prevents multiple jobs from overwriting each other's results.
@@ -72,11 +102,12 @@ echo "[$(date)] System info registered in $RESULTS_FILE"
 # Run the Python scripts for language
 # You can redirect the output of each script to a specific file in your job's result folder
 echo "[$(date)] Running llm_server_optimized.py..."
-srun python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
-
+#srun python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
+srun --export=ALL python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
 
 echo "[$(date)] Running llm_batch_optimized.py..."
-srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+#srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+srun --export=ALL python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
 
 # ---------------------------------------
 # Run the Python scripts for vision
@@ -94,4 +125,3 @@ srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER"
 
 
 echo "[$(date)] Job Finished"
-
