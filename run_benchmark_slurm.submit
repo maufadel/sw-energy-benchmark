@@ -22,13 +22,8 @@ mkdir -p "$VENV_DIR"
 "$UV_PATH" venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-# Set up a job-specific Hugging Face home to isolate model downloads
-HF_HOME_DIR="/tmp/hf_home-$SLURM_JOB_ID"
-mkdir -p "$HF_HOME_DIR"
-export HF_HOME="$HF_HOME_DIR"
-
-# Set up a trap to clean up the virtual environment and HF home on exit
-trap 'rm -rf -- "$VENV_DIR" "$HF_HOME_DIR"' EXIT
+# Set up a trap to clean up the virtual environment on exit
+trap 'rm -rf -- "$VENV_DIR"' EXIT
 
 # Install dependencies into the virtual environment
 #"$UV_PATH" pip sync "$ROOT_FOLDER/requirements.txt"
