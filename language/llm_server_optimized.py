@@ -17,6 +17,23 @@ import argparse
 from copy import deepcopy
 import traceback
 
+import signal
+
+def signal_handler(signum, frame):
+    """
+    This function is called when the script receives a signal.
+    It prints the current stack trace and then exits.
+    """
+    print(f"Received signal: {signum}", file=sys.stderr)
+    print("Printing stack traceback...", file=sys.stderr)
+    traceback.print_stack(frame, file=sys.stderr)
+    sys.exit(1)
+
+# Register the signal handler for SIGUSR1
+signal.signal(signal.SIGUSR1, signal_handler)
+
+
+
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils

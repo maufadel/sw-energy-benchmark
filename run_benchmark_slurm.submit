@@ -25,10 +25,64 @@ source "$VENV_DIR/bin/activate"
 # Set up a trap to clean up the virtual environment on exit
 trap 'rm -rf -- "$VENV_DIR"' EXIT
 
-# Install dependencies into the virtual environment
-#"$UV_PATH" pip sync "$ROOT_FOLDER/requirements.txt"
 
-"$UV_PATH" pip install -r "$ROOT_FOLDER/requirements.txt"
+# --- GPU-Specific Dependency Installation ---
+
+# First, check if nvidia-smi is available to prevent errors
+if ! command -v nvidia-smi &> /dev/null
+then
+    echo "nvidia-smi command not found. Cannot detect GPU type. Exiting."
+    exit 1
+fi
+
+# Detect the GPU name. We only query for one GPU since we requested one (--gres=gpu:1).
+# The `| head -n 1` ensures we only get one line of output.
+GPU_NAME=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader,nounits | head -n 1)
+echo "Detected GPU: $GPU_NAME"
+
+# Default requirements file
+REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+
+# Choose the requirements file based on the detected GPU name
+# Using wildcards (*) makes the matching more robust (e.g., matches "NVIDIA A100-SXM4-40GB")
+case "$GPU_NAME" in
+  *"V100"*)
+    echo "Found Tesla V100. Using legacy requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    ;;
+  *"T4"*)
+    echo "Found Tesla T4. Using legacy requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    ;;
+  *"A100"*)
+    echo "Found NVIDIA A100. Using legacy requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    ;;
+  *"H100"*)
+    echo "Found NVIDIA H100. Using legacy requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    ;;
+  *"H200"*)
+    echo "Found NVIDIA H200. Using modern requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
+    ;;
+  *)
+    echo "Warning: Unrecognized GPU '$GPU_NAME'. Falling back to legacy requirements file: $REQS_FILE"
+    # The default is already set, so no action is needed here.
+    ;;
+esac
+
+# Check if the selected requirements file exists
+if [ ! -f "$REQS_FILE" ]; then
+    echo "Error: Requirements file not found at $REQS_FILE"
+    exit 1
+fi
+
+# Install dependencies into the virtual environment using the selected file
+echo "Installing dependencies from: $REQS_FILE"
+"$UV_PATH" pip install -r "$REQS_FILE"
+
+echo "Dependencies installed successfully."
 
 # Discover the correct library path within the venv
 # --- START DEBUGGING BLOCK ---
@@ -53,6 +107,111 @@ echo "--- [DEBUG] End of verification ---"
 
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cusparselt/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
 
+echo "[DEBUG] New LD_LIBRARY_PATH is: $LD_LIBRARY_PATH"
+echo "--- [DEBUG] End of verification ---"
+
+# Set up a job-specific Hugging Face home to isolate model downloads
+HF_HOME_DIR="/cluster/home/fues/.cache/huggingface"
+mkdir -p "$HF_HOME_DIR"
+export HF_HOME="$HF_HOME_DIR"
+
+
+echo "[DEBUG] Current HF_HOME_DIR is: $HF_HOME_DIR"
+
+
+# Set up a job-specific vLLM cache
+#VLLM_CACHE_ROOT="/tmp/vllm-$SLURM_JOB_ID"
+#mkdir -p "$VLLM_CACHE_ROOT"
+#export VLLM_CACHE_ROOT="$VLLM_CACHE_ROOT"
+
+echo "[DEBUG] Current VLLM_CACHE_ROOT is: $VLLM_CACHE_ROOT"
+
+
+## DOWNLOADING MODELS BEFORE
+# --- Configuration ---
+YAML_FILE="config.yaml"
+ENV_FILE=".env"
+
+# --- Script Start ---
+
+# 1. Check if the YAML file exists
+if [ ! -f "$YAML_FILE" ]; then
+    echo "Error: YAML file not found at '$YAML_FILE'"
+    exit 1
+fi
+
+# 2. Check if the .env file exists and load the token
+if [ -f "$ENV_FILE" ]; then
+    # Using 'set -a' and 'set +a' is a robust way to export variables from the file
+    set -a
+    source "$ENV_FILE"
+    set +a
+    echo "Loaded HF_TOKEN from $ENV_FILE."
+else
+    echo "Warning: .env file not found. Will try to proceed without a token."
+    echo "This may fail for gated models like Llama or Gemma."
+fi
+
+# 3. Check if HF_TOKEN is set in the environment
+if [ -z "$HF_TOKEN" ]; then
+    echo "-----------------------------------------------------"
+    echo "Warning: HF_TOKEN is not set."
+    echo "Gated models will likely fail to download."
+    echo "If you need them, create a .env file with HF_TOKEN=your_token"
+    echo "-----------------------------------------------------"
+fi
+
+
+# 4. Parse the YAML file and download each model
+echo "Parsing models from $YAML_FILE..."
+
+# Use awk to find the LLM_MODELS block and extract model names.
+# This is more robust for complex YAML files and ignores commented-out lines.
+MODELS_TO_DOWNLOAD=$(awk '
+  # Start processing when we see the LLM_MODELS key
+  /^LLM_MODELS:/ { in_models_block = 1; next }
+  # Stop processing if we see another top-level key
+  /^[A-Z_]+:/ { in_models_block = 0 }
+  # If in the block, the line is a model entry, and not a comment...
+  in_models_block && /^\s*-\s*"/ && !/^\s*#/ {
+    # ...extract the string inside the quotes.
+    match($0, /"([^"]+)"/);
+    if (RSTART) {
+      print substr($0, RSTART + 1, RLENGTH - 2);
+    }
+  }
+' "$YAML_FILE")
+
+
+for model in $MODELS_TO_DOWNLOAD; do
+    echo "====================================================="
+    echo "Preparing to download: $model"
+    echo "====================================================="
+
+    # Use huggingface-cli to download.
+    huggingface-cli download "$model" --token "$HF_TOKEN" 
+
+    # Check if the download was successful
+    if [ $? -eq 0 ]; then
+        echo "--> SUCCESS: Successfully downloaded $model."
+    else
+        echo "--> ERROR: Failed to download $model. Please check logs for details."
+    fi
+done
+
+echo ""
+echo "====================================================="
+echo "All model downloads attempted. Process finished."
+echo "====================================================="
+
+
+
+
+
+
+# Set up a trap to clean up the virtual environment and HF home on exit
+#trap 'rm -rf -- "$VENV_DIR" "$HF_HOME_DIR" "VLLM_CACHE_ROOT"' EXIT
+#trap 'rm -rf -- "$VENV_DIR"' EXIT
 
 # --- Create a unique results directory for this specific job ---
 # This prevents multiple jobs from overwriting each other's results.

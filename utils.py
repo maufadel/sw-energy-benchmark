@@ -7,11 +7,16 @@ import time
 import threading
 import psutil
 import os
+os.environ["HF_HUB_XET_DISABLED"] = "1"
 import yaml
+from dotenv import load_dotenv
+
+from huggingface_hub import snapshot_download, HfFolder
 from dotenv import load_dotenv
 
 import torch
 from vllm import LLM, SamplingParams
+
 
 ################ GLOBAL CONSTANTS ################
 
@@ -21,6 +26,7 @@ with open("config.yaml", "r") as f:
 
 # Set access token for HF.
 load_dotenv()
+print(os.environ["HF_TOKEN"])
 
 # To avoid any issues.
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -108,18 +114,74 @@ def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
 
     print(f"GPU cooled down to {gpu_temp}°C. Continue.")
 
-def create_vllm(model_name):
-    dtype = "auto"
-    print(f"Using dtype '{dtype}' for model {model_name}.")
-    
+
+def download_model(model_name: str):
+    """
+    Downloads a single model from the Hugging Face Hub to the local cache.
+    It handles loading the HF_TOKEN from a .env file internally.
+
+    Args:
+        model_name (str): The model repository ID to download.
+    """
+    # --- Load Hugging Face Token ---
+    hf_token = os.getenv("HF_TOKEN")
+
+    if not hf_token:
+        print("Warning: HF_TOKEN not found. This may fail for gated models.")
+    else:
+        # This only needs to be done once, but it's safe to call multiple times.
+        HfFolder.save_token(hf_token)
+
+    print("="*50)
+    print(f"Attempting to download model: {model_name}")
+    print("="*50)
     try:
-        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
-            return LLM(model=model_name, dtype=dtype, max_model_len=1024*10)
-        else:
-            return LLM(model=model_name, dtype=dtype)
+        # snapshot_download downloads the entire repository to the cache.
+        # It's idempotent, meaning it won't re-download files that already exist.
+        snapshot_download(
+            repo_id=model_name,
+            token=hf_token,  # Pass the token for gated models
+            local_dir_use_symlinks=False # Recommended for stability
+        )
+        print(f"--> SUCCESS: Model '{model_name}' is available in local cache.\n")
     except Exception as e:
-        print(f"Error loading model {model_name} with dtype '{dtype}' - exception: {e}. Will try loading with float16.")
-        if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
-            return LLM(model=model_name, dtype="float16", max_model_len=1024*10)
-        else:
-            return LLM(model=model_name, dtype="float16")
+        print(f"--> ERROR: Failed to download model '{model_name}'.")
+        print(f"    Reason: {e}\n")
+
+def create_vllm(model_name):
+    dtype = "auto"  # Default dtype
+    device_name = "CPU"
+
+    # Check if a CUDA-enabled GPU is available
+    if torch.cuda.is_available():
+        device_name = torch.cuda.get_device_name(0)
+        # Set dtype based on the detected GPU name
+        if any(gpu in device_name for gpu in ["V100", "T4"]):
+            dtype = "float16"
+        elif any(gpu in device_name for gpu in ["H100", "H200", "A100", "L4", "A30"]):
+            dtype = "auto"
+        # For other GPUs, the default 'auto' is generally a safe choice.
+    print(f"Detected device: {device_name}.")
+    print(f"Using dtype '{dtype}' for model '{model_name}'.")
+    llm = LLM(
+            model=model_name,
+            dtype=dtype,
+            trust_remote_code=True
+            )
+    return llm
+
+def create_vllm_old(model_name):
+    #download_model(model_name)
+    dtype = "float16" # float16 for v100, auto for H100, H200, A100
+    print(f"Using dtype '{dtype}' for model {model_name}.")
+    return LLM(model=model_name, dtype=dtype, trust_remote_code=True)
+    if "mistral" in model_name:
+        print("Using Mistral tokenizer")
+        return LLM(model=model_name, dtype=dtype, trust_remote_code=True, tokenizer_mode="mistral")
+    
+    if model_name == "meta-llama/Llama-3.1-8B-Instruct" or model_name == "mistralai/Mistral-7B-Instruct-v0.3":
+        return LLM(model=model_name, dtype=dtype, max_model_len=1024*10)
+    else:
+        return LLM(model=model_name, dtype=dtype, trust_remote_code=True)
+    #elif model_name == "google/gemma-2-2b-it.":
+    #    return LLM(model=model_name, dtype="bfloat16")
