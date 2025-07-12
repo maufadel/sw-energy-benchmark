@@ -1,0 +1,17 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings
+ITERATIONS: 5
+MAX_TEST_DURATION: 300  # 5 minutes in seconds
+
+# Server experiment settings
+LAMBDA_QPS_ARRAY:
+  - 0.014467592592592592
+  - 0.38580246913580245
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "Qwen/Qwen3-32B"
+  - "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+  - "google/gemma-2-27b-it"

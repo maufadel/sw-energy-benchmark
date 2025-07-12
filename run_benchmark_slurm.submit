@@ -41,33 +41,33 @@ GPU_NAME=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader,nounits | head 
 echo "Detected GPU: $GPU_NAME"
 
 # Default requirements file
-REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
 
 # Choose the requirements file based on the detected GPU name
 # Using wildcards (*) makes the matching more robust (e.g., matches "NVIDIA A100-SXM4-40GB")
 case "$GPU_NAME" in
   *"V100"*)
-    echo "Found Tesla V100. Using legacy requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    echo "Found Tesla V100. Using modern requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
     ;;
   *"T4"*)
-    echo "Found Tesla T4. Using legacy requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    echo "Found Tesla T4. Using modern requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
     ;;
   *"A100"*)
-    echo "Found NVIDIA A100. Using legacy requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    echo "Found NVIDIA A100. Using modern requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
     ;;
   *"H100"*)
-    echo "Found NVIDIA H100. Using legacy requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_legacy.txt"
+    echo "Found NVIDIA H100. Using modern requirements."
+    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
     ;;
   *"H200"*)
     echo "Found NVIDIA H200. Using modern requirements."
     REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
     ;;
   *)
-    echo "Warning: Unrecognized GPU '$GPU_NAME'. Falling back to legacy requirements file: $REQS_FILE"
+    echo "Warning: Unrecognized GPU '$GPU_NAME'. Falling back to modern requirements file: $REQS_FILE"
     # The default is already set, so no action is needed here.
     ;;
 esac
