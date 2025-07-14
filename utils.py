@@ -171,12 +171,31 @@ def create_vllm(model_name):
         # For other GPUs, the default 'auto' is generally a safe choice.
     print(f"Detected device: {device_name}.")
     print(f"Using dtype '{dtype}' for model '{model_name}'.")
-    llm = LLM(
-            model=model_name,
-            dtype=dtype,
-            trust_remote_code=True
+    
+    try:
+        print("Attempting to load model with default settings...")
+        llm = LLM(
+                model=model_name,
+                dtype=dtype,
+                trust_remote_code=True
+                )
+        return llm
+    except RuntimeError as e:
+        error_message = str(e)
+        if "increase `gpu_memory_utilization`" in error_message and "decreasing `max_model_len`" in error_message:
+            print("Default model loading failed due to memory constraints.")
+            print("Retrying with memory optimization settings...")
+            llm = LLM(
+                model=model_name,
+                dtype=dtype,
+                trust_remote_code=True,
+                gpu_memory_utilization=0.95,
+                max_model_len=16384
             )
-    return llm
+            return llm
+        else:
+            # Re-raise the exception if it's not the one we can handle
+            raise e
 
 def create_vllm_old(model_name):
     #download_model(model_name)
