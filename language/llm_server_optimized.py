@@ -39,10 +39,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
 # CONSTANTS
-ITERATIONS = utils.ITERATIONS
-TEST_DURATION = utils.MAX_TEST_DURATION
-LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
-LLM_MODELS = utils.LLM_MODELS
+ITERATIONS = None
+TEST_DURATION = None
+LAMBDA_QPS_ARRAY = None
+LLM_MODELS = None
 
 class InferenceThread(threading.Thread):
     def __init__(self, llm, dataset, sampling_params, query_queue, result_lock, query_log):
@@ -123,13 +123,6 @@ class QueryGeneratorThread(threading.Thread):
         self.running = False
 
 if __name__ == "__main__":
-    results = []
-    query_log = []
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
-    dataset = load_dataset("launch/open_question_type")['train']['question']
-
     parser = argparse.ArgumentParser()
     parser.add_argument("result_folder", type=str, nargs='?', default="results",
                     help="Path to the result folder (default: 'results')")
@@ -143,7 +136,18 @@ if __name__ == "__main__":
         print(f"Created directory: {result_folder_path}")
     
     print(f"The results will be saved in: {result_folder_path}")
+    ITERATIONS = utils.ITERATIONS
+    TEST_DURATION = utils.MAX_TEST_DURATION
+    LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
+    LLM_MODELS = utils.LLM_MODELS
     print(LLM_MODELS)
+
+    results = []
+    query_log = []
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
+    dataset = load_dataset("launch/open_question_type")['train']['question']
     for model_name in LLM_MODELS:
         llm_loaded = False
         try:
