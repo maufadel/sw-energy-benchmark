@@ -29,7 +29,7 @@ LAMBDA_QPS_ARRAY = None
 LLM_MODELS = None
 
 def load_config(config_path='config.yaml'):
-    global CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS
+    global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
