@@ -19,12 +19,13 @@ import argparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
 
-# Configuration
-ITERATIONS = utils.ITERATIONS
-MODELS = utils.LLM_MODELS
 
 
 if __name__ == "__main__":
+    # Configuration
+    ITERATIONS = utils.ITERATIONS
+    LLM_MODELS = utils.LLM_MODELS
+    print(LLM_MODELS)
     # Load dataset
     ds = load_dataset("launch/open_question_type")["train"]["question"][:1000]
 
@@ -50,7 +51,7 @@ if __name__ == "__main__":
     print(f"The results will be saved in: {result_folder_path}")
 
     # Run benchmarking for each model
-    for model_name in MODELS:
+    for model_name in LLM_MODELS:
         llm_loaded = False
         try:
             print(f"Loading model {model_name}")

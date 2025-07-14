@@ -42,7 +42,7 @@ import utils
 ITERATIONS = utils.ITERATIONS
 TEST_DURATION = utils.MAX_TEST_DURATION
 LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
-MODELS = utils.LLM_MODELS
+LLM_MODELS = utils.LLM_MODELS
 
 class InferenceThread(threading.Thread):
     def __init__(self, llm, dataset, sampling_params, query_queue, result_lock, query_log):
@@ -143,8 +143,8 @@ if __name__ == "__main__":
         print(f"Created directory: {result_folder_path}")
     
     print(f"The results will be saved in: {result_folder_path}")
-
-    for model_name in MODELS:
+    print(LLM_MODELS)
+    for model_name in LLM_MODELS:
         llm_loaded = False
         try:
             print(f"Loading model {model_name}")
