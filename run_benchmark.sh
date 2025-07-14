@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Check if a config file is provided, otherwise use default
+CONFIG_FILE=${1:-config.yaml}
+
+echo "Using config file: $CONFIG_FILE"
+
 # Print the current date and time
 echo "[$(date)] Starting"
 
@@ -49,11 +54,11 @@ uv pip install -r requirements_modern.txt
 # ---------------------------------------
 # Run the Python scripts for language
 echo "[$(date)] Running llm_server_optimized.py..."
-python language/llm_server_optimized.py "$RESULTS_DIR"
+python language/llm_server_optimized.py "$RESULTS_DIR" --config "$CONFIG_FILE"
 #echo "[$(date)] Running llm_batch_vanilla.py..."
 #python language/llm_batch_vanilla.py "$RESULTS_DIR"
 echo "[$(date)] Running llm_batch_optimized.py..."
-python language/llm_batch_optimized.py "$RESULTS_DIR"
+python language/llm_batch_optimized.py "$RESULTS_DIR" --config "$CONFIG_FILE"
 
 # ---------------------------------------
 # Run the Python scripts for vision

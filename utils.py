@@ -20,29 +20,37 @@ from vllm import LLM, SamplingParams
 
 ################ GLOBAL CONSTANTS ################
 
-# Load config from YAML file
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+config = None
+CUDA_VISIBLE_DEVICES = None
+GPU_INDICES = None
+ITERATIONS = None
+MAX_TEST_DURATION = None
+LAMBDA_QPS_ARRAY = None
+LLM_MODELS = None
 
-# Set access token for HF.
-load_dotenv()
-print(os.environ["HF_TOKEN"])
+def load_config(config_path='config.yaml'):
+    global CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
 
-# To avoid any issues.
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # Set access token for HF.
+    load_dotenv()
 
-# CUDA devices that will be used for inference. For multiple devices: "0,1".
-CUDA_VISIBLE_DEVICES = config["CUDA_VISIBLE_DEVICES"]
-GPU_INDICES = list(map(int, CUDA_VISIBLE_DEVICES.split(",")))
+    # To avoid any issues.
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Number of times that each experiment will be repeated.
-ITERATIONS = config["ITERATIONS"]
-# Seconds for which server experiments will run for and timeout for batch experiments.
-MAX_TEST_DURATION = config["MAX_TEST_DURATION"]
-# For server experiments, we simulate a Poisson process, with λ set to queries per second (qps).
-LAMBDA_QPS_ARRAY = config["LAMBDA_QPS_ARRAY"]
+    # CUDA devices that will be used for inference. For multiple devices: "0,1".
+    CUDA_VISIBLE_DEVICES = config["CUDA_VISIBLE_DEVICES"]
+    GPU_INDICES = list(map(int, CUDA_VISIBLE_DEVICES.split(",")))
 
-LLM_MODELS = config["LLM_MODELS"]
+    # Number of times that each experiment will be repeated.
+    ITERATIONS = config["ITERATIONS"]
+    # Seconds for which server experiments will run for and timeout for batch experiments.
+    MAX_TEST_DURATION = config["MAX_TEST_DURATION"]
+    # For server experiments, we simulate a Poisson process, with λ set to queries per second (qps).
+    LAMBDA_QPS_ARRAY = config["LAMBDA_QPS_ARRAY"]
+
+    LLM_MODELS = config["LLM_MODELS"]
 
 ################### CLASSES #####################
 

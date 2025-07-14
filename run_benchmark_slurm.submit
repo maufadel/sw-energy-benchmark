@@ -12,6 +12,11 @@
 ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
 UV_PATH="/cluster/home/fues/.local/bin/uv"
 
+# Check if a config file is provided, otherwise use default
+CONFIG_FILE=${1:-config.yaml}
+
+echo "Using config file: $CONFIG_FILE"
+
 # --- Script Start ---
 # SLURM provides $SLURM_JOB_ID as a unique identifier for each job.
 echo "[$(date)] Starting Job ID: $SLURM_JOB_ID"
@@ -253,11 +258,11 @@ echo "[$(date)] System info registered in $RESULTS_FILE"
 # You can redirect the output of each script to a specific file in your job's result folder
 echo "[$(date)] Running llm_server_optimized.py..."
 #srun python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
-srun --export=ALL python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
+srun --export=ALL python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" --config "$CONFIG_FILE" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
 
 echo "[$(date)] Running llm_batch_optimized.py..."
 #srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
-srun --export=ALL python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+srun --export=ALL python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" --config "$CONFIG_FILE" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
 
 # ---------------------------------------
 # Run the Python scripts for vision

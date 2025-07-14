@@ -33,15 +33,16 @@ if __name__ == "__main__":
 
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(0)
-
     all_results = []
     query_log = []
-
     parser = argparse.ArgumentParser()
     parser.add_argument("result_folder", type=str, nargs='?', default="results",
-                    help="Path to the result folder (default: 'results')")
+                        help="Path to the result folder (default: 'results')")
+    parser.add_argument("--config", type=str, default="config.yaml", 
+                        help="Path to the config file (default: 'config.yaml')")
     args = parser.parse_args()
     result_folder_path = args.result_folder
+    utils.load_config(args.config)
     if not os.path.exists(result_folder_path):
         os.makedirs(result_folder_path)
         print(f"Created directory: {result_folder_path}")
