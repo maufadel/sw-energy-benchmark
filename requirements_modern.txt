@@ -2,6 +2,7 @@ vllm==0.9.2
 datasets==3.6.0
 pymongo
 huggingface-hub[cli]
+pyyaml
 
 setuptools # for triton
 
