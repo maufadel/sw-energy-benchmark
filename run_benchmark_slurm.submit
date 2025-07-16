@@ -116,7 +116,7 @@ echo "[DEBUG] New LD_LIBRARY_PATH is: $LD_LIBRARY_PATH"
 echo "--- [DEBUG] End of verification ---"
 
 # Set up a job-specific Hugging Face home to isolate model downloads
-HF_HOME_DIR="/cluster/home/fues/.cache/huggingface"
+HF_HOME_DIR="/cluster/projects/2025_fues_PROJ_HF/.cache/huggingface"
 mkdir -p "$HF_HOME_DIR"
 export HF_HOME="$HF_HOME_DIR"
 
