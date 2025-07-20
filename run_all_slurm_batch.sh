@@ -2,11 +2,11 @@
 
 # --- Configuration ---
 MAIN_CONFIG="config-50.yaml"
-BATCH_SIZE=5
+BATCH_SIZE=1
 TEMP_CONFIG_DIR="temp_configs"
-MAX_JOBS=8
+MAX_JOBS=500
 # Number of jobs submitted per batch config
-JOBS_PER_BATCH=5
+JOBS_PER_BATCH=4
 
 # --- Function to Create Batch Configs in Bash ---
 create_batch_configs() {
@@ -49,7 +49,8 @@ create_batch_configs() {
         # Create a slice of the array for the current batch
         local batch_models=("${all_models[@]:batch_start:batch_size}")
         
-        local batch_config_filename="$TEMP_CONFIG_DIR/config_batch_$((i+1)).yaml"
+        #local batch_config_filename="$TEMP_CONFIG_DIR/config_batch_$((i+1)).yaml"
+	local batch_config_filename=$(printf "$TEMP_CONFIG_DIR/config_batch_%03d.yaml" $((i+1)))
 
         # Create the new config file by combining the prefix, the current model batch, and the suffix
         {
