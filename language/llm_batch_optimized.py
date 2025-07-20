@@ -124,7 +124,7 @@ if __name__ == "__main__":
             print(traceback.format_exc())
         finally:
             # Delete the llm object and free the memory
-            if llm_loaded:
+            if 'llm' in locals():
                 del llm
             torch.cuda.empty_cache()
             gc.collect()
