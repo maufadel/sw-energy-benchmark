@@ -2,9 +2,9 @@
 set -e
 
 # --- Configuration ---
-MAIN_CONFIG="config.yaml"
+MAIN_CONFIG="config-50.yaml"
 TEMP_CONFIG_DIR="temp_configs_run_benchmark"
-MIN_DISK_SPACE_GB=40
+MIN_DISK_SPACE_GB=80
 # Default Hugging Face cache directory, can be overridden by environment variable
 HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
 
@@ -184,11 +184,17 @@ else
         # Manage cache before running the script that might download a model
         manage_hf_cache
 
+        # Create a unique subdirectory for this model's results
+        model_filename_part=$(basename "$temp_config" .yaml | sed 's/^config_//')
+        MODEL_RESULTS_DIR="$RESULTS_DIR/$model_filename_part"
+        mkdir -p "$MODEL_RESULTS_DIR"
+        echo "[$(date)] Storing results for this model in: $MODEL_RESULTS_DIR"
+
         echo "[$(date)] Running llm_server_optimized.py for $temp_config..."
-        python language/llm_server_optimized.py "$RESULTS_DIR" --config "$temp_config"
+        python language/llm_server_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config"
         
         echo "[$(date)] Running llm_batch_optimized.py for $temp_config..."
-        python language/llm_batch_optimized.py "$RESULTS_DIR" --config "$temp_config"
+        python language/llm_batch_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config"
         
         echo "[$(date)] Finished processing $temp_config"
         rm "$temp_config"
