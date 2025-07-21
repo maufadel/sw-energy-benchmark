@@ -1,0 +1,65 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings
+ITERATIONS: 5
+MAX_TEST_DURATION: 300  # 5 minutes in seconds
+
+# Server experiment settings
+LAMBDA_QPS_ARRAY:
+  - 0.014467592592592592
+  - 0.38580246913580245
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "mistralai/Mistral-Nemo-Instruct-2407"
+  - "speakleash/Bielik-11B-v2.0-Instruct"
+  - "meta-llama/Llama-3.2-3B-Instruct"
+  - "mistralai/Ministral-8B-Instruct-2410"
+  - "ibm-granite/granite-3.0-8b-instruct"
+  - "meta-llama/Meta-Llama-3-8B-Instruct"
+  - "01-ai/Yi-1.5-9B-Chat-16K"
+  - "meta-llama/Llama-3.1-8B-Instruct"
+  - "nvidia/Mistral-NeMo-Minitron-8B-Instruct"
+  - "Qwen/Qwen1.5-14B-Chat"
+  - "cognitivecomputations/Dolphin3.0-R1-Mistral-24B"
+  - "NousResearch/Hermes-3-Llama-3.1-8B"
+  - "NousResearch/Nous-Hermes-2-SOLAR-10.7B"
+  - "mistralai/Codestral-22B-v0.1"
+  - "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated"
+  - "refuelai/Llama-3-Refueled"
+  - "openchat/openchat-3.6-8b-20240522"
+  - "01-ai/Yi-1.5-6B-Chat"
+  - "openchat/openchat-3.5-1210"
+  - "openchat/openchat-3.5-0106"
+  - "allenai/Llama-3.1-Tulu-3-8B-SFT"
+  - "mlabonne/Daredevil-8B"
+  - "CohereForAI/aya-expanse-8b"
+  - "NousResearch/Hermes-2-Pro-Llama-3-8B"
+  - "NousResearch/Hermes-2-Pro-Mistral-7B"
+  - "allenai/OLMo-2-1124-7B-Instruct"
+  - "Qwen/Qwen2.5-Math-7B-Instruct"
+  - "ibm-granite/granite-3.1-2b-instruct"
+  - "openchat/openchat_3.5"
+  - "Intel/neural-chat-7b-v3-2"
+  - "teknium/OpenHermes-2-Mistral-7B"
+  - "teknium/OpenHermes-2.5-Mistral-7B"
+  - "cognitivecomputations/dolphin-2.9.2-qwen2-7b"
+  - "ibm-granite/granite-3.2-2b-instruct"
+  - "NousResearch/Nous-Hermes-2-Mistral-7B-DPO"
+  - "Intel/neural-chat-7b-v3-1"
+  - "berkeley-nest/Starling-LM-7B-alpha"
+  - "mlabonne/ChimeraLlama-3-8B-v3"
+  - "upstage/SOLAR-10.7B-Instruct-v1.0"
+  - "Intel/neural-chat-7b-v3-3"
+  - "abacusai/Liberated-Qwen1.5-14B"
+  - "nvidia/AceMath-1.5B-Instruct"
+  - "mlabonne/ChimeraLlama-3-8B-v2"
+  - "argilla-warehouse/Llama-3.1-8B-MagPie-Ultra"
+  - "mlabonne/Daredevil-8B-abliterated"
+  - "mlabonne/Beyonder-4x7B-v3"
+  - "cognitivecomputations/dolphin-2.9.3-mistral-7B-32k"
+  - "mistralai/Mistral-7B-Instruct-v0.3"
+  - "google/recurrentgemma-9b-it"
+  - "abacusai/Llama-3-Smaug-8B"
+
