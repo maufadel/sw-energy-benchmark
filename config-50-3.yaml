@@ -1,0 +1,64 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings
+ITERATIONS: 5
+MAX_TEST_DURATION: 300  # 5 minutes in seconds
+
+# Server experiment settings
+LAMBDA_QPS_ARRAY:
+  - 0.014467592592592592
+  - 0.38580246913580245
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "mlabonne/NeuralBeagle14-7B"
+  - "HuggingFaceH4/zephyr-7b-alpha"
+  - "Salesforce/LLaMA-3-8B-SFR-Iterative-DPO-R"
+  - "mistralai/Mistral-7B-Instruct-v0.2"
+  - "microsoft/Orca-2-13b"
+  - "argilla/notus-7b-v1"
+  - "Qwen/Qwen2.5-1.5B-Instruct"
+  - "cognitivecomputations/dolphin-2.9-llama3-8b"
+  - "ibm-granite/granite-3.0-2b-instruct"
+  - "nvidia/Nemotron-Mini-4B-Instruct"
+  - "gradientai/Llama-3-8B-Instruct-Gradient-1048k"
+  - "abacusai/bigstral-12b-32k"
+  - "nvidia/AceInstruct-1.5B"
+  - "Intel/neural-chat-7b-v3"
+  - "internlm/internlm2-7b"
+  - "01-ai/Yi-9B"
+  - "HuggingFaceH4/zephyr-7b-beta"
+  - "01-ai/Yi-9B-200K"
+  - "Open-Orca/Mistral-7B-OpenOrca"
+  - "google/gemma-1.1-7b-it"
+  - "mlabonne/AlphaMonarch-7B"
+  - "Qwen/Qwen1.5-7B-Chat"
+  - "allenai/OLMoE-1B-7B-0125-Instruct"
+  - "Deci/DeciLM-7B-instruct"
+  - "ibm-granite/granite-3.1-3b-a800m-instruct"
+  - "CausalLM/14B"
+  - "google/gemma-2-2b-jpn-it"
+  - "google/gemma-2-2b-it"
+  - "01-ai/Yi-Coder-9B-Chat"
+  - "mistral-community/Mixtral-8x22B-v0.1"
+  - "stabilityai/stablelm-2-12b-chat"
+  - "ibm/merlinite-7b"
+  - "CausalLM/preview-1-hf"
+  - "databricks/dbrx-base"
+  - "tiiuae/Falcon3-1B-Instruct"
+  - "HuggingFaceH4/zephyr-7b-gemma-v0.1"
+  - "CohereForAI/aya-23-8B"
+  - "Qwen/Qwen1.5-MoE-A2.7B-Chat"
+  - "NousResearch/Yarn-Solar-10b-32k"
+  - "mlabonne/phixtral-2x2_8"
+  - "microsoft/phi-2"
+  - "TencentARC/LLaMA-Pro-8B-Instruct"
+  - "NousResearch/Hermes-3-Llama-3.2-3B"
+  - "tiiuae/falcon-mamba-7b"
+  - "WizardLMTeam/WizardLM-13B-V1.2"
+  - "NousResearch/Yarn-Solar-10b-64k"
+  - "mlabonne/OrpoLlama-3-8B"
+  - "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+  - "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+  - "deepseek-ai/deepseek-llm-7b-chat"
