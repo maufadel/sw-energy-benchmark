@@ -3,7 +3,7 @@ datasets==3.6.0
 pymongo
 huggingface-hub[cli]
 pyyaml
-
+transformers==4.53.2
 setuptools # for triton
 
 # local
