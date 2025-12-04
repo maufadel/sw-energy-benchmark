@@ -2,11 +2,15 @@
 set -e
 
 # --- Configuration ---
-MAIN_CONFIG="config-50.yaml"
-TEMP_CONFIG_DIR="temp_configs_run_benchmark"
+# Use first argument as config file, default to config.yaml
+MAIN_CONFIG="${1:-config.yaml}"
+# Extract config basename without extension and path
+CONFIG_BASENAME=$(basename "$MAIN_CONFIG" .yaml)
+TEMP_CONFIG_DIR="temp_configs_${CONFIG_BASENAME}"
 MIN_DISK_SPACE_GB=80
 # Default Hugging Face cache directory, can be overridden by environment variable
 HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
+export PYTHONUNBUFFERED=1
 
 # --- Load .env file for HF_TOKEN ---
 if [ -f .env ]; then
@@ -108,14 +112,21 @@ create_individual_configs() {
 
 # --- Main Execution ---
 
-# --- 1. Handle Arguments and Generate Batch Configs ---
-if [ -n "$1" ]; then
-    TEMP_CONFIG_DIR=$1
-    echo "[$(date)] Resuming from provided temp directory: $TEMP_CONFIG_DIR"
-    if [ ! -d "$TEMP_CONFIG_DIR" ]; then
-        echo "[$(date)] Error: Provided temp directory '$TEMP_CONFIG_DIR' does not exist."
-        exit 1
-    fi
+# --- 1. Check if config file exists ---
+if [ ! -f "$MAIN_CONFIG" ]; then
+    echo "[$(date)] Error: Config file not found at $MAIN_CONFIG"
+    echo "Usage: $0 [config_file.yaml]"
+    echo "  If no config file is specified, defaults to config.yaml"
+    exit 1
+fi
+
+echo "[$(date)] Using config file: $MAIN_CONFIG"
+echo "[$(date)] Temp config directory: $TEMP_CONFIG_DIR"
+
+# --- 2. Generate Batch Configs ---
+# Check if resuming from existing temp directory (for manual resume)
+if [ -d "$TEMP_CONFIG_DIR" ] && [ -n "$(ls -A "$TEMP_CONFIG_DIR" 2>/dev/null)" ]; then
+    echo "[$(date)] Found existing temp directory with configs. Resuming from: $TEMP_CONFIG_DIR"
 else
     echo "[$(date)] Starting a new run. Generating batch configs from $MAIN_CONFIG..."
     create_individual_configs "$MAIN_CONFIG"
@@ -162,7 +173,7 @@ echo -e "\n" >> "$SYSTEM_INFO_FILE"
 # ---------------------------------------
 # Install Python virtual environment.
 echo "[$(date)] Creating Python virtual environment..."
-uv venv --python python3.11 .venv
+uv venv --python python3.11 --clear .venv
 echo "[$(date)] Activating virtual environment..."
 source .venv/bin/activate
 
@@ -190,12 +201,35 @@ else
         mkdir -p "$MODEL_RESULTS_DIR"
         echo "[$(date)] Storing results for this model in: $MODEL_RESULTS_DIR"
 
+        # Optional debug flags (uncomment if needed for troubleshooting):
+        # export VLLM_TRACE_FUNCTION=1        # Record vLLM function calls
+        # export CUDA_LAUNCH_BLOCKING=1       # Make CUDA operations synchronous (helps identify hanging kernels)
+        # export NCCL_DEBUG=TRACE             # Detailed NCCL logging for multi-GPU issues
+
         echo "[$(date)] Running llm_server_optimized.py for $temp_config..."
-        python language/llm_server_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config"
-        
+        # Allow script to continue even if model fails (exit code 1)
+        python language/llm_server_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config" || {
+            exit_code=$?
+            if [ $exit_code -eq 1 ]; then
+                echo "[$(date)] Model failed in server mode but continuing with next model..."
+            else
+                echo "[$(date)] Unexpected error in server mode (exit code $exit_code), stopping..."
+                exit $exit_code
+            fi
+        }
+
         echo "[$(date)] Running llm_batch_optimized.py for $temp_config..."
-        python language/llm_batch_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config"
-        
+        # Allow script to continue even if model fails (exit code 1)
+        python language/llm_batch_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config" || {
+            exit_code=$?
+            if [ $exit_code -eq 1 ]; then
+                echo "[$(date)] Model failed in batch mode but continuing with next model..."
+            else
+                echo "[$(date)] Unexpected error in batch mode (exit code $exit_code), stopping..."
+                exit $exit_code
+            fi
+        }
+
         echo "[$(date)] Finished processing $temp_config"
         rm "$temp_config"
         echo "[$(date)] Removed temporary config: $temp_config"

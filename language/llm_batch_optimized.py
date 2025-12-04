@@ -8,16 +8,48 @@ import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlShutdown
 import threading
 import traceback
+import signal
+import sys
+import os
+import argparse
 
 from vllm import LLM, SamplingParams
 from energymeter import EnergyMeter
 from datasets import load_dataset
-import sys
-import os
-import argparse
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utils
+
+
+def signal_handler(signum, frame):
+    """
+    Handle termination signals gracefully.
+    Prints diagnostics and exits cleanly.
+    """
+    signal_names = {
+        signal.SIGTERM: "SIGTERM",
+        signal.SIGINT: "SIGINT",
+        signal.SIGUSR1: "SIGUSR1"
+    }
+    sig_name = signal_names.get(signum, f"Signal {signum}")
+
+    print(f"\n{'='*60}", file=sys.stderr)
+    print(f"Received {sig_name} - Initiating graceful shutdown", file=sys.stderr)
+    print(f"{'='*60}", file=sys.stderr)
+    print("Stack trace at signal:", file=sys.stderr)
+    traceback.print_stack(frame, file=sys.stderr)
+
+    # Attempt cleanup if llm exists in globals
+    if 'llm' in globals():
+        print("\nAttempting cleanup of active LLM...", file=sys.stderr)
+        utils.cleanup_vllm_resources(
+            llm=globals()['llm'],
+            model_name=globals().get('current_model_name', 'unknown'),
+            verbose=True
+        )
+
+    print(f"\nExiting due to {sig_name}", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
@@ -39,6 +71,11 @@ if __name__ == "__main__":
     # Sampling parameters
     sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
 
+    # Register signal handlers
+    # Note: SIGINT (Ctrl+C) is NOT registered here to allow natural cancellation
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGUSR1, signal_handler)
+
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(0)
     all_results = []
@@ -49,9 +86,19 @@ if __name__ == "__main__":
 
     print(f"The results will be saved in: {result_folder_path}")
 
+    # Track current model for signal handler and failed models for summary
+    current_model_name = None
+    failed_models = []
+
     # Run benchmarking for each model
     for model_name in LLM_MODELS:
+        current_model_name = model_name  # Track for signal handler
         llm_loaded = False
+        llm = None  # Explicitly initialize
+
+        # Clean GPU memory before loading model to ensure clean state
+        utils.cleanup_gpu_memory(verbose=True)
+
         try:
             print(f"Loading model {model_name}")
             llm = utils.create_vllm(model_name)
@@ -73,7 +120,7 @@ if __name__ == "__main__":
                 # Start energy measurement
                 start_time = time.time()
                 meter.begin()
-        
+
                 # Process all queries
                 outputs = llm.generate(ds, sampling_params)
         
@@ -120,13 +167,57 @@ if __name__ == "__main__":
                 utils.wait_for_gpu_cooldown(handle)
 
         except Exception as e:
-            print(f"Error with model {model_name}")
+            print(f"\n{'='*60}")
+            print(f"ERROR: Exception occurred with model {model_name}")
+            print(f"{'='*60}")
+            print(f"Exception type: {type(e).__name__}")
+            print(f"Exception message: {str(e)}")
+            print("\nFull traceback:")
             print(traceback.format_exc())
+            print(f"{'='*60}\n")
+
+            # Log model failure for summary at the end
+            failed_models.append({
+                'model': model_name,
+                'error': str(e),
+                'error_type': type(e).__name__
+            })
+
         finally:
-            # Delete the llm object and free the memory
-            if 'llm' in locals():
-                del llm
-            torch.cuda.empty_cache()
-            gc.collect()
+            # Comprehensive cleanup using new utility function
+            print(f"\nExecuting cleanup for model: {model_name}")
+            cleanup_success = utils.cleanup_vllm_resources(
+                llm=llm if llm is not None else None,
+                model_name=model_name,
+                verbose=True
+            )
+
+            if not cleanup_success:
+                print(f"WARNING: Cleanup completed with errors for {model_name}")
+                print("This may affect subsequent models. Continuing anyway...")
+
+            # Small delay to ensure cleanup completes
+            time.sleep(2)
+
+    # Print summary of failures
+    if failed_models:
+        print("\n" + "="*60)
+        print("SUMMARY: The following models encountered errors:")
+        print("="*60)
+        for failure in failed_models:
+            print(f"  - {failure['model']}")
+            print(f"    Error: {failure['error_type']}: {failure['error'][:100]}")
+        print("="*60 + "\n")
+    else:
+        print("\n" + "="*60)
+        print("SUCCESS: All models processed without errors")
+        print("="*60 + "\n")
 
     nvmlShutdown()
+
+    # Force exit if any models failed to ensure no hanging processes
+    # os._exit(1) with error code so bash script can handle it
+    if failed_models:
+        print("Forcing process exit due to model failures to prevent hanging...")
+        print("Exiting with error code 1...")
+        os._exit(1)

@@ -15,7 +15,8 @@ EnergyMeter is used to track the energy used by the CPU, main memory, GPU and di
 ## How to use
 1. Install `uv`:   
    `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. Simply run: `bash run_benchmark.sh`
+2. Simply run: `./run_benchmark.sh config-150.yaml &> run_benchmark-config-150-<GPU-NAME>.txt`   
+   The txt file will contain all the logging outputs.
 
 ## Note
 Right now, the benchmark uses only the GPU corresponding to CUDA device 0. The monitoring also tracks only that device.
