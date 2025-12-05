@@ -19,8 +19,20 @@ if [ -f .env ]; then
     source .env
     set +a
 else
-    echo "[$(date)] Warning: .env file not found. Hugging Face token might not be available."
+    echo "[$(date)] Warning: .env file not found."
 fi
+
+# --- Check if HF_TOKEN is available ---
+if [ -z "$HF_TOKEN" ]; then
+    echo "[$(date)] ERROR: HF_TOKEN is not set!"
+    echo "[$(date)] Please set HF_TOKEN either:"
+    echo "  1. In a .env file in the current directory, or"
+    echo "  2. As an environment variable: export HF_TOKEN=your_token"
+    echo "[$(date)] You can get a token from: https://huggingface.co/settings/tokens"
+    exit 1
+fi
+
+echo "[$(date)] HF_TOKEN is available (length: ${#HF_TOKEN} characters)"
 
 # --- Function to check disk space and clean cache ---
 manage_hf_cache() {
