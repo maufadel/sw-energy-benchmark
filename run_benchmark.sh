@@ -53,19 +53,39 @@ manage_hf_cache() {
 
         # Find and delete oldest model directories until space is sufficient
         while [ "$(df -k . | awk 'NR==2 {print int($4 / 1024 / 1024)}')" -lt "$MIN_DISK_SPACE_GB" ]; do
-            # Find the oldest model directory based on modification time
-            OLDEST_MODEL_DIR=$(find "$HF_CACHE_DIR/hub" -maxdepth 1 -type d -name 'models--*' -printf '%T@ %p\n' | sort -n | head -n 1 | cut -d' ' -f2-)
+            # Find all model directories sorted by modification time (oldest first)
+            MODEL_DIRS=$(find "$HF_CACHE_DIR/hub" -maxdepth 1 -type d -name 'models--*' -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-)
 
-            if [ -z "$OLDEST_MODEL_DIR" ]; then
+            if [ -z "$MODEL_DIRS" ]; then
                 echo "[$(date)] No more models to delete from cache, but disk space is still low."
                 echo "[$(date)] WARNING: Could not free up enough space. Continuing anyway."
                 break
             fi
 
-            echo "[$(date)] Deleting oldest model cache directory to free up space: $OLDEST_MODEL_DIR"
-            du -sh "$OLDEST_MODEL_DIR"
-            rm -rf "$OLDEST_MODEL_DIR"
-            echo "[$(date)] Deleted."
+            # Try to delete models starting from oldest until one succeeds
+            MODEL_DELETED=false
+            while IFS= read -r OLDEST_MODEL_DIR; do
+                if [ -z "$OLDEST_MODEL_DIR" ]; then
+                    continue
+                fi
+                
+                echo "[$(date)] Trying to delete model cache directory: $OLDEST_MODEL_DIR"
+                du -sh "$OLDEST_MODEL_DIR"
+                
+                if rm -rf "$OLDEST_MODEL_DIR" 2>/dev/null; then
+                    echo "[$(date)] Successfully deleted: $OLDEST_MODEL_DIR"
+                    MODEL_DELETED=true
+                    break
+                else
+                    echo "[$(date)] Failed to delete $OLDEST_MODEL_DIR due to permission issues. Trying next oldest model..."
+                fi
+            done <<< "$MODEL_DIRS"
+            
+            if [ "$MODEL_DELETED" = false ]; then
+                echo "[$(date)] Could not delete any model directories due to permission issues."
+                echo "[$(date)] WARNING: Could not free up enough space. Continuing anyway."
+                break
+            fi
             
             # Check space again
             CURRENT_SPACE_GB=$(df -k . | awk 'NR==2 {print int($4 / 1024 / 1024)}')
