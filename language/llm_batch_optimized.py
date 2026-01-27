@@ -12,6 +12,7 @@ import signal
 import sys
 import os
 import argparse
+import random
 
 from vllm import LLM, SamplingParams
 from energymeter import EnergyMeter
@@ -52,6 +53,16 @@ def signal_handler(signum, frame):
     sys.exit(1)
 
 
+# Determinism
+def fix_seeds(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("result_folder", type=str, nargs='?', default="results",
@@ -61,15 +72,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result_folder_path = args.result_folder
     utils.load_config(args.config)
+    fix_seeds()
     # Configuration
     ITERATIONS = utils.ITERATIONS
     LLM_MODELS = utils.LLM_MODELS
     print(LLM_MODELS)
     # Load dataset
-    ds = load_dataset("launch/open_question_type")["train"]["question"][:1000]
+    dataset = load_dataset("launch/open_question_type")["train"]["question"][:1000]
 
-    # Sampling parameters
-    sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
+    # Deterministic decoding (benchmark contract)
+    sampling_params = utils.get_sampling_params()
 
     # Register signal handlers
     # Note: SIGINT (Ctrl+C) is NOT registered here to allow natural cancellation
@@ -95,6 +107,7 @@ if __name__ == "__main__":
         current_model_name = model_name  # Track for signal handler
         llm_loaded = False
         llm = None  # Explicitly initialize
+        tokenizer = None
 
         # Clean GPU memory before loading model to ensure clean state
         utils.cleanup_gpu_memory(verbose=True)
@@ -102,61 +115,111 @@ if __name__ == "__main__":
         try:
             print(f"Loading model {model_name}")
             llm = utils.create_vllm(model_name)
+            
+            # Get tokenizer for token counting
+            tokenizer = llm.get_tokenizer()
             llm_loaded = True
             
             for t in range(ITERATIONS):
                 print(f"Start iteration {t} for model {model_name}")
+
+                ############################
+                # Batch warm-up (discarded)
+                ############################
+                warmup_prompt = dataset[:1]
+                _ = llm.generate(warmup_prompt, sampling_params)
+
+                torch.cuda.synchronize()
+                time.sleep(2)
+
+                ############################
+                # Monitoring + energy
+                ############################
         
                 # Initialize energy meter
                 meter = EnergyMeter(label="Batch LLM", include_idle=True, ignore_disk=True)
         
-                processed_queries = 0
-                total_generated_tokens = 0
-        
-                # Start monitoring
-                monitor = utils.MonitorThread()
+                # Start monitoring with EnhancedMonitorThread
+                monitor = utils.EnhancedMonitorThread()
                 monitor.start()
         
                 # Start energy measurement
                 start_time = time.time()
                 meter.begin()
+                
+                # Mark batch as running
+                monitor.update_llm_metrics(requests_running=1)
 
                 # Process all queries
-                outputs = llm.generate(ds, sampling_params)
+                batch_start = datetime.now()
+                outputs = llm.generate(dataset, sampling_params)
+                batch_end = datetime.now()
+                
+                torch.cuda.synchronize()
+
+                # Mark batch as complete
+                monitor.update_llm_metrics(requests_running=0)
+
+                # Stop monitoring
+                monitor.stop()
         
-                for j, output in enumerate(outputs):
+                # Stop energy meter
+                meter.end()
+
+                total_input_tokens = 0
+                total_output_tokens = 0
+                batch_duration = (batch_end - batch_start).total_seconds()
+                
+                for j, (prompt, output) in enumerate(zip(dataset, outputs)):
                     generated_text = output.outputs[0].text
-                    num_tokens = len(generated_text.split())  # Approximate token count
-                    total_generated_tokens += num_tokens
+                    
+                    # Count tokens using tokenizer
+                    in_tokens = len(tokenizer.encode(prompt))
+                    out_tokens = len(tokenizer.encode(generated_text))
+                    total_input_tokens += in_tokens
+                    total_output_tokens += out_tokens
+                    
+                    # Update monitor with per-request metrics
+                    # For batch processing, TTFT and e2e are approximations
+                    monitor.update_llm_metrics(
+                        success=True,
+                        prompt_tokens=in_tokens,
+                        generation_tokens=out_tokens
+                    )
         
                     query_log.append({
                         "iteration": t,
                         "model": model_name,
                         "query_id": j,
                         "response_text": generated_text,
-                        "num_tokens": num_tokens,
+                        "input_tokens": in_tokens,
+                        "output_tokens": out_tokens,
                         "timestamp": datetime.now().isoformat()
                     })
+                
+                # Calculate batch-level metrics
+                avg_tokens_per_sec = total_output_tokens / batch_duration if batch_duration > 0 else 0
+                monitor.update_llm_metrics(
+                    e2e_latency=batch_duration,
+                    tokens_per_sec=avg_tokens_per_sec
+                )
         
-                print(f"Queries processed: {len(outputs)}, total tokens: {total_generated_tokens}\n")
-        
-                # Stop monitoring
-                monitor.stop()
-        
-                # Stop energy meter
-                meter.end()
-                print("Simulation complete.")
+                print(f"Queries processed: {len(outputs)}, total output tokens: {total_output_tokens}\n")
         
                 # Store results
                 res = {k: np.sum(v) for k, v in meter.get_total_joules_per_component().items()}
+                res["iteration"] = t
                 res["measurement_duration"] = meter.duration
                 res["measurement_timestamp"] = meter.start_time
                 res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
                                                                      datetime.now().astimezone().tzinfo).isoformat()
                 res["sampling_params"] = sampling_params.__dict__
                 res["model"] = model_name
-                res["processed_queries"] = len(ds)
-                res["total_generated_tokens"] = total_generated_tokens
+                res["processed_queries"] = len(dataset)
+                res["total_input_tokens"] = total_input_tokens
+                res["total_output_tokens"] = total_output_tokens
+                res["batch_duration_seconds"] = batch_duration
+                res["avg_tokens_per_second"] = avg_tokens_per_sec
                 res.update(monitor.get_all_metrics())
                 all_results.append(res)
         

@@ -4,6 +4,8 @@ CUDA_VISIBLE_DEVICES: "0"
 # Benchmark settings
 ITERATIONS: 5
 MAX_TEST_DURATION: 300  # 5 minutes in seconds
+CONTEXT_LENGTH: 1024
+WARMUP_DURATION: 60
 
 # Server experiment settings
 LAMBDA_QPS_ARRAY:

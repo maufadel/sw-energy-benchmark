@@ -1,21 +1,24 @@
-import threading
 import gc
 import torch
 import time
-import queue
 import numpy as np
 import psutil
 import pandas as pd
 from datetime import datetime
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlShutdown
-from vllm import LLM, SamplingParams
+from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
 from energymeter import EnergyMeter
 from datasets import load_dataset
 import sys
 import os
 import argparse
-from copy import deepcopy
 import traceback
+import asyncio
+import threading
+from collections import defaultdict
+# Add the parent directory to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import utils
 
 import signal
 
@@ -39,7 +42,6 @@ def signal_handler(signum, frame):
     # Attempt cleanup if llm exists in globals
     if 'llm' in globals():
         print("\nAttempting cleanup of active LLM...", file=sys.stderr)
-        # Import utils here to avoid circular dependency issues
         sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
         import utils
         utils.cleanup_vllm_resources(
@@ -51,12 +53,8 @@ def signal_handler(signum, frame):
     print(f"\nExiting due to {sig_name}", file=sys.stderr)
     sys.exit(1)
 
-# Register the signal handler for SIGUSR1 and SIGTERM
-# Note: SIGINT (Ctrl+C) is NOT registered here to allow natural cancellation
 signal.signal(signal.SIGUSR1, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
-
-
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -68,83 +66,277 @@ TEST_DURATION = None
 LAMBDA_QPS_ARRAY = None
 LLM_MODELS = None
 
-class InferenceThread(threading.Thread):
-    def __init__(self, llm, dataset, sampling_params, query_queue, result_lock, query_log):
-        super().__init__(daemon=True)
-        self.llm = llm
-        self.dataset = dataset
-        self.sampling_params = sampling_params
-        self.query_queue = query_queue
-        self.result_lock = result_lock
-        self.query_log = query_log
-        self.total_generated_tokens = 0
-        self.processed_queries = 0
-        self.running = True
-
-    def run(self):
-        while self.running:
-            queries = []
-            metadata = []
-            while not self.query_queue.empty():
-                item = self.query_queue.get()
-                if item is not None:
-                    queries.append(item["query"])
-                    metadata.append(item)
-                    self.query_queue.task_done()
-
-            if len(queries) > 0:
-                try:
-                    start_time = datetime.now()
-                    outputs = self.llm.generate([self.dataset[q % len(self.dataset)] for q in queries],
-                                                self.sampling_params)
-                    end_time = datetime.now()
+async def process_single_request(llm, prompt, sampling_params, request_id, query_id, queued_time, 
+                                model_name, lambda_qps, monitor, pending_requests_count):
+    """Process a single request using AsyncLLMEngine.generate() correctly."""
+    inference_start = datetime.now()
     
-                    with self.result_lock:
-                        for output, meta in zip(outputs, metadata):
-                            response_text = output.outputs[0].text
-                            self.total_generated_tokens += len(response_text.split())
-                            self.processed_queries += 1
+    try:
+        # Track running requests
+        if monitor:
+            monitor.update_llm_metrics(requests_running=pending_requests_count)
+        
+        # engine.generate() returns an async generator - must iterate over it
+        results_generator = llm.generate(prompt, sampling_params, request_id)
+        
+        final_output = None
+        
+        async for request_output in results_generator:
+            final_output = request_output
+        
+        inference_end = datetime.now()
+        
+        if final_output is None:
+            raise RuntimeError(f"No output received for request {request_id}")
+        
+        response_text = final_output.outputs[0].text
+        tokens = len(response_text.split())
+        prompt_tokens = len(prompt.split())
+        
+        # Extract metrics from vLLM's RequestStateStats
+        request_metrics = final_output.metrics
+        
+        # Use vLLM's built-in metrics
+        ttft = request_metrics.first_token_latency if hasattr(request_metrics, 'first_token_latency') else None
+        num_generation_tokens = request_metrics.num_generation_tokens if hasattr(request_metrics, 'num_generation_tokens') else tokens
+        
+        # Calculate e2e latency from vLLM timestamps
+        if hasattr(request_metrics, 'arrival_time') and hasattr(request_metrics, 'last_token_ts'):
+            # Convert monotonic time to relative duration
+            e2e_latency = request_metrics.last_token_ts - request_metrics.queued_ts
+        else:
+            e2e_latency = (inference_end - inference_start).total_seconds()
+        
+        tokens_per_sec = num_generation_tokens / e2e_latency if e2e_latency > 0 else 0
+        
+        # Calculate queue time (time spent waiting before scheduling)
+        queue_time = None
+        if hasattr(request_metrics, 'scheduled_ts') and hasattr(request_metrics, 'queued_ts'):
+            queue_time = request_metrics.scheduled_ts - request_metrics.queued_ts
+        
+        # Update LLM-specific metrics
+        if monitor:
+            monitor.update_llm_metrics(
+                ttft=ttft,
+                e2e_latency=e2e_latency,
+                success=True,
+                prompt_tokens=prompt_tokens,
+                generation_tokens=num_generation_tokens,
+                tokens_per_sec=tokens_per_sec
+            )
+        
+        return {
+            "query_id": query_id,
+            "model": model_name,
+            "lambda_qps": lambda_qps,
+            "queued_time": queued_time.isoformat(),
+            "inference_start": inference_start.isoformat(),
+            "inference_end": inference_end.isoformat(),
+            "response_text": response_text,
+            "tokens": tokens,
+            "prompt_tokens": prompt_tokens,
+            "generation_tokens": num_generation_tokens,
+            "ttft_seconds": ttft,
+            "e2e_latency_seconds": e2e_latency,
+            "queue_time_seconds": queue_time,
+            "tokens_per_second": tokens_per_sec,
+            "arrival_time": request_metrics.arrival_time if hasattr(request_metrics, 'arrival_time') else None,
+            "queued_ts": request_metrics.queued_ts if hasattr(request_metrics, 'queued_ts') else None,
+            "scheduled_ts": request_metrics.scheduled_ts if hasattr(request_metrics, 'scheduled_ts') else None,
+            "first_token_ts": request_metrics.first_token_ts if hasattr(request_metrics, 'first_token_ts') else None,
+            "last_token_ts": request_metrics.last_token_ts if hasattr(request_metrics, 'last_token_ts') else None,
+            "is_corrupted": request_metrics.is_corrupted if hasattr(request_metrics, 'is_corrupted') else False
+        }
+    except Exception as e:
+        # Update failure metric
+        if monitor:
+            monitor.update_llm_metrics(failure=True)
+        raise e
+
+
+async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor):
+    """Run async benchmark with open-loop query generation."""
+    query_log = []
+    total_generated_tokens = 0
+    processed_queries = 0
+    queries_generated = 0
     
-                            self.query_log.append({
-                                "query_id": meta["query"],
-                                "model": meta["model"],
-                                "lambda_qps": meta["lambda_qps"],
-                                "queued_time": meta["queued_time"].isoformat(),
-                                "inference_start": start_time.isoformat(),
-                                "inference_end": end_time.isoformat(),
-                                "response_text": response_text,
-                            })
-                except Exception as e:
-                    print("Error when doing inference", e)
-                    print(traceback(e))
+    start_test = time.time()
+    query_id = 0
+    
+    # List to track all pending tasks
+    pending_tasks = []
+    
+    while time.time() - start_test < test_duration:
+        # Generate next query based on Poisson process
+        await asyncio.sleep(np.random.exponential(1 / lambda_qps))
+        
+        query_id += 1
+        queries_generated += 1
+        queued_time = datetime.now()
+        
+        # Submit request immediately (open-loop)
+        prompt = dataset[query_id % len(dataset)]
+        request_id = f"request-{query_id}"
+        
+        # Track waiting requests
+        if monitor:
+            monitor.update_llm_metrics(requests_waiting=len(pending_tasks))
+        
+        # Create task for this request
+        task = asyncio.create_task(
+            process_single_request(
+                llm, prompt, sampling_params, request_id, 
+                query_id, queued_time, model_name, lambda_qps,
+                monitor, len(pending_tasks)
+            )
+        )
+        pending_tasks.append(task)
+    
+    # Wait for all pending requests to complete
+    print(f"Waiting for {len(pending_tasks)} pending requests to complete...")
+    results = await asyncio.gather(*pending_tasks, return_exceptions=True)
+    
+    # Process results
+    for result in results:
+        if isinstance(result, Exception):
+            print(f"Error in request: {result}")
+        else:
+            query_log.append(result)
+            total_generated_tokens += result["tokens"]
+            processed_queries += 1
+    
+    return {
+        "query_log": query_log,
+        "total_generated_tokens": total_generated_tokens,
+        "processed_queries": processed_queries,
+        "queries_generated": queries_generated
+    }
 
-    def stop(self):
-        self.running = False
 
-class QueryGeneratorThread(threading.Thread):
-    def __init__(self, query_queue, lambda_qps, model_name):
-        super().__init__(daemon=True)
-        self.query_queue = query_queue
-        self.lambda_qps = lambda_qps
-        self.model_name = model_name
-        self.queries_generated = 0
-        self.running = True
+async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, handle):
+    """Run a single iteration of the benchmark."""
+    print(f"Running with model {model_name} and lambda_qps {lambda_qps}")
+    
+    monitor = utils.EnhancedMonitorThread()
+    meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
+    
+    monitor.start()
+    meter.begin()
+    
+    # Run the benchmark
+    result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor)
+    
+    meter.end()
+    monitor.stop()
+    
+    print(f"Processed {result['processed_queries']} queries")
+    
+    # Compile results
+    res = {k: np.sum(v) if isinstance(v, list) else v for k, v in meter.get_total_joules_per_component().items()}
+    res["measurement_duration"] = meter.duration
+    res["measurement_timestamp"] = meter.start_time
+    res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
+                                                         datetime.now().astimezone().tzinfo).isoformat()
+    res["sampling_params"] = sampling_params.__dict__
+    res["model"] = model_name
+    res["lambda_qps"] = lambda_qps
+    res.update(monitor.get_all_metrics())
+    res.update({
+        "total_generated_tokens": result["total_generated_tokens"],
+        "processed_queries": result["processed_queries"],
+        "queries_generated": result["queries_generated"],
+    })
+    
+    return res, result["query_log"]
 
-    def run(self):
-        query_id = 0
-        while self.running:
-            time.sleep(np.random.exponential(1 / self.lambda_qps))
-            query_id += 1
-            self.queries_generated += 1
-            self.query_queue.put({
-                "query": query_id,
-                "model": self.model_name,
-                "lambda_qps": self.lambda_qps,
-                "queued_time": datetime.now()
+
+async def main_async(result_folder_path, handle, sampling_params, dataset):
+    """Main async function to run all benchmarks."""
+    results = []
+    query_log = []
+    
+    current_model_name = None
+    failed_models = []
+
+    for model_name in LLM_MODELS:
+        current_model_name = model_name
+        llm_loaded = False
+        llm = None
+
+        # Clean GPU memory before loading model to ensure clean state
+        utils.cleanup_gpu_memory(verbose=True)
+
+        try:
+            print(f"Loading model {model_name}")
+            engine_args = AsyncEngineArgs(model=model_name)
+            llm = AsyncLLMEngine.from_engine_args(engine_args)
+            llm_loaded = True
+            
+            for lambda_qps in LAMBDA_QPS_ARRAY:
+                for t in range(ITERATIONS):
+                    print(f"Start iteration {t} with model {model_name} and lambda_qps {lambda_qps}")
+                    
+                    # Run iteration
+                    res, iter_query_log = await run_iteration(
+                        llm, dataset, sampling_params, lambda_qps, 
+                        model_name, TEST_DURATION, handle
+                    )
+                    
+                    results.append(res)
+                    query_log.extend(iter_query_log)
+                    
+                    pd.DataFrame(results).to_csv(result_folder_path+"/llm_server_optimized_results.csv")
+                    pd.DataFrame(query_log).to_csv(result_folder_path+"/llm_server_optimized_details.csv")
+    
+                    utils.wait_for_gpu_cooldown(handle)
+    
+        except Exception as e:
+            print(f"\n{'='*60}")
+            print(f"ERROR: Exception occurred with model {model_name}")
+            print(f"{'='*60}")
+            print(f"Exception type: {type(e).__name__}")
+            print(f"Exception message: {str(e)}")
+            print("\nFull traceback:")
+            print(traceback.format_exc())
+            print(f"{'='*60}\n")
+
+            failed_models.append({
+                'model': model_name,
+                'error': str(e),
+                'error_type': type(e).__name__
             })
 
-    def stop(self):
-        self.running = False
+        finally:
+            print(f"\nExecuting cleanup for model: {model_name}")
+            cleanup_success = utils.cleanup_vllm_resources(
+                llm=llm if llm is not None else None,
+                model_name=model_name,
+                verbose=True
+            )
+
+            if not cleanup_success:
+                print(f"WARNING: Cleanup completed with errors for {model_name}")
+                print("This may affect subsequent models. Continuing anyway...")
+
+            time.sleep(2)
+
+    # Print summary of failures
+    if failed_models:
+        print("\n" + "="*60)
+        print("SUMMARY: The following models encountered errors:")
+        print("="*60)
+        for failure in failed_models:
+            print(f"  - {failure['model']}")
+            print(f"    Error: {failure['error_type']}: {failure['error'][:100]}")
+        print("="*60 + "\n")
+    else:
+        print("\n" + "="*60)
+        print("SUCCESS: All models processed without errors")
+        print("="*60 + "\n")
+
+    return failed_models
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -166,130 +358,16 @@ if __name__ == "__main__":
     LLM_MODELS = utils.LLM_MODELS
     print(LLM_MODELS)
 
-    results = []
-    query_log = []
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(0)
-    sampling_params = SamplingParams(max_tokens=500, temperature=0.7)
+    sampling_params = utils.get_sampling_params()
     dataset = load_dataset("launch/open_question_type")['train']['question']
 
-    # Track current model for signal handler and failed models for summary
-    current_model_name = None
-    failed_models = []
-
-    for model_name in LLM_MODELS:
-        current_model_name = model_name  # Track for signal handler
-        llm_loaded = False
-        llm = None  # Explicitly initialize
-
-        # Clean GPU memory before loading model to ensure clean state
-        utils.cleanup_gpu_memory(verbose=True)
-
-        try:
-            print(f"Loading model {model_name}")
-            llm = utils.create_vllm(model_name)
-            llm_loaded = True
-            for lambda_qps in LAMBDA_QPS_ARRAY:
-                for t in range(ITERATIONS):
-                    print(f"Start iteration {t} with model {model_name} and lambda_qps {lambda_qps}")
-                    monitor = utils.MonitorThread()
-                    query_queue = queue.Queue()
-                    result_lock = threading.Lock()
-    
-                    inference_thread = InferenceThread(llm, dataset, sampling_params, query_queue, result_lock, query_log)
-                    query_generator = QueryGeneratorThread(query_queue, lambda_qps, model_name)
-                    meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
-    
-                    monitor.start()
-                    inference_thread.start()
-                    query_generator.start()
-                    meter.begin()
-    
-                    time.sleep(TEST_DURATION)
-
-                    # Stop threads and wait for them to finish.
-                    query_generator.stop()
-                    inference_thread.stop()
-                    query_generator.join()
-                    inference_thread.join()
-                    
-                    monitor.stop()
-                    meter.end()
-    
-                    print(f"Processed {inference_thread.processed_queries} queries")
-                    res = {k: np.sum(v) for k, v in meter.get_total_joules_per_component().items()}
-                    res["measurement_duration"] = meter.duration
-                    res["measurement_timestamp"] = meter.start_time
-                    res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
-                                                                         datetime.now().astimezone().tzinfo).isoformat()
-                    res["sampling_params"] = sampling_params.__dict__
-                    res["model"] = model_name
-                    res["lambda_qps"] = lambda_qps
-                    res.update(monitor.get_all_metrics())
-                    res.update({
-                        "total_generated_tokens": inference_thread.total_generated_tokens,
-                        "processed_queries": inference_thread.processed_queries,
-                        "queries_generated": query_generator.queries_generated,
-                    })
-                    results.append(res)
-                    pd.DataFrame(results).to_csv(result_folder_path+"/llm_server_optimized_results.csv")
-                    pd.DataFrame(query_log).to_csv(result_folder_path+"/llm_server_optimized_details.csv")
-                    del inference_thread
-                    del query_generator
-    
-                    utils.wait_for_gpu_cooldown(handle)
-    
-        except Exception as e:
-            print(f"\n{'='*60}")
-            print(f"ERROR: Exception occurred with model {model_name}")
-            print(f"{'='*60}")
-            print(f"Exception type: {type(e).__name__}")
-            print(f"Exception message: {str(e)}")
-            print("\nFull traceback:")
-            print(traceback.format_exc())
-            print(f"{'='*60}\n")
-
-            # Log model failure for summary at the end
-            failed_models.append({
-                'model': model_name,
-                'error': str(e),
-                'error_type': type(e).__name__
-            })
-
-        finally:
-            # Comprehensive cleanup using new utility function
-            print(f"\nExecuting cleanup for model: {model_name}")
-            cleanup_success = utils.cleanup_vllm_resources(
-                llm=llm if llm is not None else None,
-                model_name=model_name,
-                verbose=True
-            )
-
-            if not cleanup_success:
-                print(f"WARNING: Cleanup completed with errors for {model_name}")
-                print("This may affect subsequent models. Continuing anyway...")
-
-            # Small delay to ensure cleanup completes
-            time.sleep(2)
-
-    # Print summary of failures
-    if failed_models:
-        print("\n" + "="*60)
-        print("SUMMARY: The following models encountered errors:")
-        print("="*60)
-        for failure in failed_models:
-            print(f"  - {failure['model']}")
-            print(f"    Error: {failure['error_type']}: {failure['error'][:100]}")
-        print("="*60 + "\n")
-    else:
-        print("\n" + "="*60)
-        print("SUCCESS: All models processed without errors")
-        print("="*60 + "\n")
+    # Run the async main function
+    failed_models = asyncio.run(main_async(result_folder_path, handle, sampling_params, dataset))
 
     nvmlShutdown()
 
-    # Force exit if any models failed to ensure no hanging processes
-    # os._exit(1) with error code so bash script can handle it
     if failed_models:
         print("Forcing process exit due to model failures to prevent hanging...")
         print("Exiting with error code 1...")
