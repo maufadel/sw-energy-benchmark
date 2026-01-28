@@ -65,17 +65,13 @@ ITERATIONS = None
 TEST_DURATION = None
 LAMBDA_QPS_ARRAY = None
 LLM_MODELS = None
+WARMUP_DURATION = None
+
 
 async def process_single_request(llm, prompt, sampling_params, request_id, query_id, queued_time, 
-                                model_name, lambda_qps, monitor, pending_requests_count):
-    """Process a single request using AsyncLLMEngine.generate() correctly."""
-    inference_start = datetime.now()
-    
-    try:
-        # Track running requests
-        if monitor:
-            monitor.update_llm_metrics(requests_running=pending_requests_count)
-        
+                                model_name, lambda_qps, monitor):
+    """Process a single request using AsyncLLMEngine.generate() correctly."""    
+    try:        
         # engine.generate() returns an async generator - must iterate over it
         results_generator = llm.generate(prompt, sampling_params, request_id)
         
@@ -84,28 +80,24 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
         async for request_output in results_generator:
             final_output = request_output
         
-        inference_end = datetime.now()
-        
         if final_output is None:
             raise RuntimeError(f"No output received for request {request_id}")
         
         response_text = final_output.outputs[0].text
-        tokens = len(response_text.split())
-        prompt_tokens = len(prompt.split())
+        num_generation_tokens = len(final_output.outputs[0].token_ids)
+        prompt_tokens = len(final_output.prompt_token_ids)
         
         # Extract metrics from vLLM's RequestStateStats
         request_metrics = final_output.metrics
         
         # Use vLLM's built-in metrics
         ttft = request_metrics.first_token_latency if hasattr(request_metrics, 'first_token_latency') else None
-        num_generation_tokens = request_metrics.num_generation_tokens if hasattr(request_metrics, 'num_generation_tokens') else tokens
         
         # Calculate e2e latency from vLLM timestamps
-        if hasattr(request_metrics, 'arrival_time') and hasattr(request_metrics, 'last_token_ts'):
+        # See more here https://docs.vllm.ai/en/stable/design/metrics/#engine-core-events
+        if hasattr(request_metrics, 'queued_ts') and hasattr(request_metrics, 'last_token_ts'):
             # Convert monotonic time to relative duration
             e2e_latency = request_metrics.last_token_ts - request_metrics.queued_ts
-        else:
-            e2e_latency = (inference_end - inference_start).total_seconds()
         
         tokens_per_sec = num_generation_tokens / e2e_latency if e2e_latency > 0 else 0
         
@@ -115,25 +107,21 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
             queue_time = request_metrics.scheduled_ts - request_metrics.queued_ts
         
         # Update LLM-specific metrics
-        if monitor:
-            monitor.update_llm_metrics(
-                ttft=ttft,
-                e2e_latency=e2e_latency,
-                success=True,
-                prompt_tokens=prompt_tokens,
-                generation_tokens=num_generation_tokens,
-                tokens_per_sec=tokens_per_sec
-            )
+        monitor.update_llm_metrics(
+            ttft=ttft,
+            e2e_latency=e2e_latency,
+            success=True,
+            prompt_tokens=prompt_tokens,
+            generation_tokens=num_generation_tokens,
+            tokens_per_sec=tokens_per_sec
+        )
         
         return {
             "query_id": query_id,
             "model": model_name,
             "lambda_qps": lambda_qps,
             "queued_time": queued_time.isoformat(),
-            "inference_start": inference_start.isoformat(),
-            "inference_end": inference_end.isoformat(),
             "response_text": response_text,
-            "tokens": tokens,
             "prompt_tokens": prompt_tokens,
             "generation_tokens": num_generation_tokens,
             "ttft_seconds": ttft,
@@ -159,10 +147,10 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
     query_log = []
     total_generated_tokens = 0
     processed_queries = 0
-    queries_generated = 0
+    queries_submitted = 0
     
     start_test = time.time()
-    query_id = 0
+    query_id = -1 # We start with index 0
     
     # List to track all pending tasks
     pending_tasks = []
@@ -172,23 +160,19 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
         await asyncio.sleep(np.random.exponential(1 / lambda_qps))
         
         query_id += 1
-        queries_generated += 1
+        queries_submitted += 1
         queued_time = datetime.now()
         
         # Submit request immediately (open-loop)
         prompt = dataset[query_id % len(dataset)]
         request_id = f"request-{query_id}"
         
-        # Track waiting requests
-        if monitor:
-            monitor.update_llm_metrics(requests_waiting=len(pending_tasks))
-        
         # Create task for this request
         task = asyncio.create_task(
             process_single_request(
                 llm, prompt, sampling_params, request_id, 
                 query_id, queued_time, model_name, lambda_qps,
-                monitor, len(pending_tasks)
+                monitor
             )
         )
         pending_tasks.append(task)
@@ -203,22 +187,22 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
             print(f"Error in request: {result}")
         else:
             query_log.append(result)
-            total_generated_tokens += result["tokens"]
+            total_generated_tokens += result["generation_tokens"]
             processed_queries += 1
     
     return {
         "query_log": query_log,
         "total_generated_tokens": total_generated_tokens,
         "processed_queries": processed_queries,
-        "queries_generated": queries_generated
+        "queries_submitted": queries_submitted
     }
 
 
-async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, handle):
+async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, handle, log=True):
     """Run a single iteration of the benchmark."""
     print(f"Running with model {model_name} and lambda_qps {lambda_qps}")
-    
-    monitor = utils.EnhancedMonitorThread()
+
+    monitor = utils.EnhancedMonitorThread(llm_engine=llm)
     meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
     
     monitor.start()
@@ -226,7 +210,7 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     
     # Run the benchmark
     result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor)
-    
+
     meter.end()
     monitor.stop()
     
@@ -238,14 +222,14 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     res["measurement_timestamp"] = meter.start_time
     res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
                                                          datetime.now().astimezone().tzinfo).isoformat()
-    res["sampling_params"] = sampling_params.__dict__
+    res["sampling_params"] = str(sampling_params)
     res["model"] = model_name
     res["lambda_qps"] = lambda_qps
     res.update(monitor.get_all_metrics())
     res.update({
         "total_generated_tokens": result["total_generated_tokens"],
         "processed_queries": result["processed_queries"],
-        "queries_generated": result["queries_generated"],
+        "queries_submitted": result["queries_submitted"],
     })
     
     return res, result["query_log"]
@@ -272,6 +256,14 @@ async def main_async(result_folder_path, handle, sampling_params, dataset):
             engine_args = AsyncEngineArgs(model=model_name)
             llm = AsyncLLMEngine.from_engine_args(engine_args)
             llm_loaded = True
+
+            # Warmup iteration.
+            print("Warming up")
+            await run_iteration(
+                llm, dataset, sampling_params, max(LAMBDA_QPS_ARRAY), 
+                model_name, WARMUP_DURATION, handle
+            )
+            utils.wait_for_gpu_cooldown(handle)
             
             for lambda_qps in LAMBDA_QPS_ARRAY:
                 for t in range(ITERATIONS):
@@ -356,6 +348,8 @@ if __name__ == "__main__":
     TEST_DURATION = utils.MAX_TEST_DURATION
     LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
     LLM_MODELS = utils.LLM_MODELS
+    WARMUP_DURATION = utils.WARMUP_DURATION
+    print(str(WARMUP_DURATION))
     print(LLM_MODELS)
 
     nvmlInit()

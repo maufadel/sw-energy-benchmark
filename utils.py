@@ -34,9 +34,11 @@ CONTEXT_LENGTH = None
 
 
 def load_config(config_path='config.yaml'):
-    global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS
+    global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS, WARMUP_DURATION
+    print(os.path.abspath(config_path))
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
+    print(config)
 
     # Set access token for HF.
     load_dotenv()
@@ -74,22 +76,17 @@ class EnhancedMonitorThread(threading.Thread):
     - No changes to existing metric names
     
     New LLM-specific metrics added:
-    - nim_time_to_first_token_seconds_events: List of TTFT measurements per request
-    - nim_e2e_request_latency_seconds_events: List of end-to-end latencies per request
-    - nim_request_success_total: Counter of successful requests
-    - nim_request_failure_total: Counter of failed requests
-    - nim_prompt_tokens_total: Counter of prompt tokens processed
-    - nim_generation_tokens_total: Counter of generation tokens
-    - nim_tokens_per_second_events: List of per-request throughput measurements
-    - nim_tokens_per_second_current: System-wide throughput sampled over time
-    - nim_num_requests_running: List of concurrent running requests over time
-    - nim_num_requests_waiting: List of queued requests over time
-    - nim_generation_tokens_total_samples: Generation token counter sampled over time
-    - nim_prompt_tokens_total_samples: Prompt token counter sampled over time
-    - nim_request_success_total_samples: Success counter sampled over time
-    - nim_request_failure_total_samples: Failure counter sampled over time
+    - time_to_first_token_seconds_events: List of TTFT measurements per request
+    - e2e_request_latency_seconds_events: List of end-to-end latencies per request
+    - request_success_total: Counter of successful requests
+    - request_failure_total: Counter of failed requests
+    - prompt_tokens_total: Counter of prompt tokens processed
+    - generation_tokens_total: Counter of generation tokens
+    - tokens_per_second_events: List of per-request throughput measurements
+    - generation_tokens_total_samples: Generation token counter sampled over time
+    - prompt_tokens_total_samples: Prompt token counter sampled over time
     """
-    def __init__(self, gpu_indices=None, secs_between_samples=1):
+    def __init__(self, gpu_indices=None, secs_between_samples=0.1, llm_engine=None):
         super().__init__(daemon=True)
         
         if gpu_indices:
@@ -106,6 +103,7 @@ class EnhancedMonitorThread(threading.Thread):
         self.secs_between_samples = secs_between_samples
         self.running = True
         self.gpu_handles = {i: nvmlDeviceGetHandleByIndex(i) for i in self.gpu_indices}
+        self.llm_engine = llm_engine
         
         # Original metrics (unchanged names)
         self.gpu_utilization = {i: [] for i in self.gpu_indices}
@@ -118,31 +116,24 @@ class EnhancedMonitorThread(threading.Thread):
         
         # New LLM-specific metrics (NVIDIA NIM / vLLM aligned)
         # These are per-request events collected as they complete
-        self.nim_time_to_first_token_seconds_events = []
-        self.nim_e2e_request_latency_seconds_events = []
-        self.nim_tokens_per_second_events = []
+        self.time_to_first_token_seconds_events = []
+        self.e2e_request_latency_seconds_events = []
+        self.tokens_per_second_events = []
         
         # These are counters
-        self.nim_request_success_total = 0
-        self.nim_request_failure_total = 0
-        self.nim_prompt_tokens_total = 0
-        self.nim_generation_tokens_total = 0
+        self.request_success_total = 0
+        self.request_failure_total = 0
+        self.prompt_tokens_total = 0
+        self.generation_tokens_total = 0
         
         # These are sampled periodically in run() loop (same frequency as GPU/CPU)
-        self.nim_num_requests_running = []
-        self.nim_num_requests_waiting = []
-        self.nim_tokens_per_second_current = []
-        self.nim_generation_tokens_total_samples = []
-        self.nim_prompt_tokens_total_samples = []
-        self.nim_request_success_total_samples = []
-        self.nim_request_failure_total_samples = []
+        self.generation_tokens_total_samples = []
+        self.prompt_tokens_total_samples = []
         
         # Internal tracking for derived metrics
         self._lock = threading.Lock()
         self._last_snapshot_time = time.time()
         self._last_generation_tokens = 0
-        self._current_requests_running = 0
-        self._current_requests_waiting = 0
         
     def run(self):
         while self.running:
@@ -165,24 +156,8 @@ class EnhancedMonitorThread(threading.Thread):
             
             # Sample LLM metrics at same frequency as GPU/CPU
             with self._lock:
-                self.nim_num_requests_running.append(self._current_requests_running)
-                self.nim_num_requests_waiting.append(self._current_requests_waiting)
-                self.nim_generation_tokens_total_samples.append(self.nim_generation_tokens_total)
-                self.nim_prompt_tokens_total_samples.append(self.nim_prompt_tokens_total)
-                self.nim_request_success_total_samples.append(self.nim_request_success_total)
-                self.nim_request_failure_total_samples.append(self.nim_request_failure_total)
-                
-                # Calculate current tokens per second from delta
-                current_time = time.time()
-                elapsed = current_time - self._last_snapshot_time
-                if elapsed > 0:
-                    tokens_delta = self.nim_generation_tokens_total - self._last_generation_tokens
-                    current_tps = tokens_delta / elapsed
-                    self.nim_tokens_per_second_current.append(current_tps)
-                    self._last_generation_tokens = self.nim_generation_tokens_total
-                else:
-                    self.nim_tokens_per_second_current.append(0.0)
-                self._last_snapshot_time = current_time
+                self.generation_tokens_total_samples.append(self.generation_tokens_total)
+                self.prompt_tokens_total_samples.append(self.prompt_tokens_total)
             
             time.sleep(self.secs_between_samples)
     
@@ -191,8 +166,7 @@ class EnhancedMonitorThread(threading.Thread):
         self.join()
     
     def update_llm_metrics(self, ttft=None, e2e_latency=None, success=False, failure=False,
-                          prompt_tokens=0, generation_tokens=0, tokens_per_sec=None,
-                          requests_running=None, requests_waiting=None):
+                          prompt_tokens=0, generation_tokens=0, tokens_per_sec=None):
         """
         Update LLM-specific metrics. Call this from request processing.
         
@@ -204,33 +178,25 @@ class EnhancedMonitorThread(threading.Thread):
             prompt_tokens: Number of prompt tokens (accumulates to counter)
             generation_tokens: Number of generation tokens (accumulates to counter)
             tokens_per_sec: Tokens per second for this request (per-request event)
-            requests_running: Current number of running requests (updates current state)
-            requests_waiting: Current number of waiting requests (updates current state)
         """
         with self._lock:
             # Per-request events
             if ttft is not None:
-                self.nim_time_to_first_token_seconds_events.append(ttft)
+                self.time_to_first_token_seconds_events.append(ttft)
             if e2e_latency is not None:
-                self.nim_e2e_request_latency_seconds_events.append(e2e_latency)
+                self.e2e_request_latency_seconds_events.append(e2e_latency)
             if tokens_per_sec is not None:
-                self.nim_tokens_per_second_events.append(tokens_per_sec)
+                self.tokens_per_second_events.append(tokens_per_sec)
             
             # Counters
             if success:
-                self.nim_request_success_total += 1
+                self.request_success_total += 1
             if failure:
-                self.nim_request_failure_total += 1
+                self.request_failure_total += 1
             if prompt_tokens > 0:
-                self.nim_prompt_tokens_total += prompt_tokens
+                self.prompt_tokens_total += prompt_tokens
             if generation_tokens > 0:
-                self.nim_generation_tokens_total += generation_tokens
-            
-            # Current state (sampled in run loop)
-            if requests_running is not None:
-                self._current_requests_running = requests_running
-            if requests_waiting is not None:
-                self._current_requests_waiting = requests_waiting
+                self.generation_tokens_total += generation_tokens
     
     def get_all_metrics(self):
         """
@@ -250,24 +216,19 @@ class EnhancedMonitorThread(threading.Thread):
         # New LLM-specific metrics
         with self._lock:
             # Per-request events (collected as they complete)
-            all_metrics["nim_time_to_first_token_seconds_events"] = self.nim_time_to_first_token_seconds_events.copy()
-            all_metrics["nim_e2e_request_latency_seconds_events"] = self.nim_e2e_request_latency_seconds_events.copy()
-            all_metrics["nim_tokens_per_second_events"] = self.nim_tokens_per_second_events.copy()
+            all_metrics["time_to_first_token_seconds_events"] = self.time_to_first_token_seconds_events.copy()
+            all_metrics["e2e_request_latency_seconds_events"] = self.e2e_request_latency_seconds_events.copy()
+            all_metrics["tokens_per_second_events"] = self.tokens_per_second_events.copy()
             
             # Counter totals (final values)
-            all_metrics["nim_request_success_total"] = self.nim_request_success_total
-            all_metrics["nim_request_failure_total"] = self.nim_request_failure_total
-            all_metrics["nim_prompt_tokens_total"] = self.nim_prompt_tokens_total
-            all_metrics["nim_generation_tokens_total"] = self.nim_generation_tokens_total
+            all_metrics["request_success_total"] = self.request_success_total
+            all_metrics["request_failure_total"] = self.request_failure_total
+            all_metrics["prompt_tokens_total"] = self.prompt_tokens_total
+            all_metrics["generation_tokens_total"] = self.generation_tokens_total
             
             # Time-series sampled at same frequency as GPU/CPU metrics
-            all_metrics["nim_num_requests_running"] = self.nim_num_requests_running.copy()
-            all_metrics["nim_num_requests_waiting"] = self.nim_num_requests_waiting.copy()
-            all_metrics["nim_tokens_per_second_current"] = self.nim_tokens_per_second_current.copy()
-            all_metrics["nim_generation_tokens_total_samples"] = self.nim_generation_tokens_total_samples.copy()
-            all_metrics["nim_prompt_tokens_total_samples"] = self.nim_prompt_tokens_total_samples.copy()
-            all_metrics["nim_request_success_total_samples"] = self.nim_request_success_total_samples.copy()
-            all_metrics["nim_request_failure_total_samples"] = self.nim_request_failure_total_samples.copy()
+            all_metrics["generation_tokens_total_samples"] = self.generation_tokens_total_samples.copy()
+            all_metrics["prompt_tokens_total_samples"] = self.prompt_tokens_total_samples.copy()
         
         return all_metrics
 
@@ -621,7 +582,7 @@ def create_vllm(model_name):
         "dtype": dtype,
         "trust_remote_code": True,
         "gpu_memory_utilization": 0.9,
-        "max_model_len": self.CONTEXT_LENGTH,  # input context
+        "max_model_len": CONTEXT_LENGTH,  # input context
         # We leave scheduler policy, KV cache block, tensor parallelism, paged attention defaults
         # to vLLM defaults unless specified here
     }
@@ -633,8 +594,8 @@ def create_vllm(model_name):
         return llm
     except RuntimeError as e:
         error_message = str(e)
-            # Re-raise the exception if it's not the one we can handle
-            raise e
+        # Re-raise the exception if it's not the one we can handle
+        raise e
 
 def get_sampling_params():
     return SamplingParams(

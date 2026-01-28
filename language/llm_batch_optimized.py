@@ -140,15 +140,12 @@ if __name__ == "__main__":
                 meter = EnergyMeter(label="Batch LLM", include_idle=True, ignore_disk=True)
         
                 # Start monitoring with EnhancedMonitorThread
-                monitor = utils.EnhancedMonitorThread()
+                monitor = utils.EnhancedMonitorThread(llm_engine=llm)
                 monitor.start()
         
                 # Start energy measurement
                 start_time = time.time()
                 meter.begin()
-                
-                # Mark batch as running
-                monitor.update_llm_metrics(requests_running=1)
 
                 # Process all queries
                 batch_start = datetime.now()
@@ -157,17 +154,12 @@ if __name__ == "__main__":
                 
                 torch.cuda.synchronize()
 
-                # Mark batch as complete
-                monitor.update_llm_metrics(requests_running=0)
-
                 # Stop monitoring
                 monitor.stop()
         
                 # Stop energy meter
                 meter.end()
 
-                total_input_tokens = 0
-                total_output_tokens = 0
                 batch_duration = (batch_end - batch_start).total_seconds()
                 
                 for j, (prompt, output) in enumerate(zip(dataset, outputs)):
@@ -176,8 +168,6 @@ if __name__ == "__main__":
                     # Count tokens using tokenizer
                     in_tokens = len(tokenizer.encode(prompt))
                     out_tokens = len(tokenizer.encode(generated_text))
-                    total_input_tokens += in_tokens
-                    total_output_tokens += out_tokens
                     
                     # Update monitor with per-request metrics
                     # For batch processing, TTFT and e2e are approximations
@@ -192,19 +182,17 @@ if __name__ == "__main__":
                         "model": model_name,
                         "query_id": j,
                         "response_text": generated_text,
-                        "input_tokens": in_tokens,
-                        "output_tokens": out_tokens,
                         "timestamp": datetime.now().isoformat()
                     })
                 
-                # Calculate batch-level metrics
-                avg_tokens_per_sec = total_output_tokens / batch_duration if batch_duration > 0 else 0
+                # Calculate metrics
+                avg_tokens_per_sec = out_tokens / batch_duration if batch_duration > 0 else 0
                 monitor.update_llm_metrics(
                     e2e_latency=batch_duration,
                     tokens_per_sec=avg_tokens_per_sec
                 )
         
-                print(f"Queries processed: {len(outputs)}, total output tokens: {total_output_tokens}\n")
+                print(f"Queries processed: {len(outputs)}, total output tokens: {out_tokens}\n")
         
                 # Store results
                 res = {k: np.sum(v) for k, v in meter.get_total_joules_per_component().items()}
@@ -213,11 +201,9 @@ if __name__ == "__main__":
                 res["measurement_timestamp"] = meter.start_time
                 res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
                                                                      datetime.now().astimezone().tzinfo).isoformat()
-                res["sampling_params"] = sampling_params.__dict__
+                res["sampling_params"] = str(sampling_params)
                 res["model"] = model_name
                 res["processed_queries"] = len(dataset)
-                res["total_input_tokens"] = total_input_tokens
-                res["total_output_tokens"] = total_output_tokens
                 res["batch_duration_seconds"] = batch_duration
                 res["avg_tokens_per_second"] = avg_tokens_per_sec
                 res.update(monitor.get_all_metrics())
