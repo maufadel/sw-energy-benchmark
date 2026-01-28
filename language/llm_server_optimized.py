@@ -69,7 +69,7 @@ WARMUP_DURATION = None
 
 
 async def process_single_request(llm, prompt, sampling_params, request_id, query_id, queued_time, 
-                                model_name, lambda_qps, monitor):
+                                model_name, lambda_qps, monitor, iteration):
     """Process a single request using AsyncLLMEngine.generate() correctly."""    
     try:        
         # engine.generate() returns an async generator - must iterate over it
@@ -117,6 +117,7 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
         )
         
         return {
+            "iteration": iteration,
             "query_id": query_id,
             "model": model_name,
             "lambda_qps": lambda_qps,
@@ -142,7 +143,7 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
         raise e
 
 
-async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor):
+async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor, iteration):
     """Run async benchmark with open-loop query generation."""
     query_log = []
     total_generated_tokens = 0
@@ -172,7 +173,7 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
             process_single_request(
                 llm, prompt, sampling_params, request_id, 
                 query_id, queued_time, model_name, lambda_qps,
-                monitor
+                monitor, iteration
             )
         )
         pending_tasks.append(task)
@@ -198,7 +199,7 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
     }
 
 
-async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, handle, log=True):
+async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, handle, iteration):
     """Run a single iteration of the benchmark."""
     print(f"Running with model {model_name} and lambda_qps {lambda_qps}")
 
@@ -209,7 +210,7 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     meter.begin()
     
     # Run the benchmark
-    result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor)
+    result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor, iteration)
 
     meter.end()
     monitor.stop()
@@ -261,7 +262,7 @@ async def main_async(result_folder_path, handle, sampling_params, dataset):
             print("Warming up")
             await run_iteration(
                 llm, dataset, sampling_params, max(LAMBDA_QPS_ARRAY), 
-                model_name, WARMUP_DURATION, handle
+                model_name, WARMUP_DURATION, handle, -1
             )
             utils.wait_for_gpu_cooldown(handle)
             
@@ -272,7 +273,7 @@ async def main_async(result_folder_path, handle, sampling_params, dataset):
                     # Run iteration
                     res, iter_query_log = await run_iteration(
                         llm, dataset, sampling_params, lambda_qps, 
-                        model_name, TEST_DURATION, handle
+                        model_name, TEST_DURATION, handle, t
                     )
                     
                     results.append(res)
@@ -349,13 +350,12 @@ if __name__ == "__main__":
     LAMBDA_QPS_ARRAY = utils.LAMBDA_QPS_ARRAY
     LLM_MODELS = utils.LLM_MODELS
     WARMUP_DURATION = utils.WARMUP_DURATION
-    print(str(WARMUP_DURATION))
     print(LLM_MODELS)
 
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(0)
     sampling_params = utils.get_sampling_params()
-    dataset = load_dataset("launch/open_question_type")['train']['question']
+    dataset = load_dataset("rajpurkar/squad")['train']['question']
 
     # Run the async main function
     failed_models = asyncio.run(main_async(result_folder_path, handle, sampling_params, dataset))

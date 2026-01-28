@@ -78,7 +78,7 @@ if __name__ == "__main__":
     LLM_MODELS = utils.LLM_MODELS
     print(LLM_MODELS)
     # Load dataset
-    dataset = load_dataset("launch/open_question_type")["train"]["question"][:1000]
+    dataset = load_dataset("rajpurkar/squad")["train"]["question"][:1000]
 
     # Deterministic decoding (benchmark contract)
     sampling_params = utils.get_sampling_params()

@@ -1,5 +1,5 @@
 vllm==0.14.1
-datasets==3.6.0
+datasets==4.5.0
 pymongo
 huggingface-hub[cli]
 pyyaml

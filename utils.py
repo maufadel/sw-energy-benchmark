@@ -35,10 +35,8 @@ CONTEXT_LENGTH = None
 
 def load_config(config_path='config.yaml'):
     global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS, WARMUP_DURATION
-    print(os.path.abspath(config_path))
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
-    print(config)
 
     # Set access token for HF.
     load_dotenv()
