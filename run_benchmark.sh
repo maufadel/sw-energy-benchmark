@@ -188,8 +188,8 @@ lscpu >> "$SYSTEM_INFO_FILE" 2>/dev/null || echo "lscpu not found" >> "$SYSTEM_I
 echo -e "\n" >> "$SYSTEM_INFO_FILE"
 
 # Run and log nvidia-smi
-echo "nvidia-smi" >> "$SYSTEM_INFO_FILE"
-nvidia-smi >> "$SYSTEM_INFO_FILE" 2>/dev/null || echo "nvidia-smi not found" >> "$SYSTEM_INFO_FILE"
+echo "nvidia-smi -q" >> "$SYSTEM_INFO_FILE"
+nvidia-smi -q >> "$SYSTEM_INFO_FILE" 2>/dev/null || echo "nvidia-smi not found" >> "$SYSTEM_INFO_FILE"
 echo -e "\n" >> "$SYSTEM_INFO_FILE"
 
 # Run and log free -h
