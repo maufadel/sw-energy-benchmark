@@ -8,6 +8,8 @@ import time
 import threading
 import psutil
 import os
+import random
+import numpy as np
 os.environ["HF_HUB_XET_DISABLED"] = "1"
 import yaml
 from dotenv import load_dotenv
@@ -231,6 +233,15 @@ class EnhancedMonitorThread(threading.Thread):
         return all_metrics
 
 ################ STATIC METHODS ################
+
+# Determinism
+def fix_seeds(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
     """Wait until the GPU temperature drops below the target temperature."""

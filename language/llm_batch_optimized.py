@@ -53,16 +53,6 @@ def signal_handler(signum, frame):
     sys.exit(1)
 
 
-# Determinism
-def fix_seeds(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("result_folder", type=str, nargs='?', default="results",
@@ -72,7 +62,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result_folder_path = args.result_folder
     utils.load_config(args.config)
-    fix_seeds()
+    utils.fix_seeds()
     # Configuration
     ITERATIONS = utils.ITERATIONS
     LLM_MODELS = utils.LLM_MODELS
@@ -171,11 +161,12 @@ if __name__ == "__main__":
                     
                     # Update monitor with per-request metrics
                     # For batch processing, TTFT and e2e are approximations
-                    monitor.update_llm_metrics(
-                        success=True,
-                        prompt_tokens=in_tokens,
-                        generation_tokens=out_tokens
-                    )
+                    if monitor:
+                        monitor.update_llm_metrics(
+                            success=True,
+                            prompt_tokens=in_tokens,
+                            generation_tokens=out_tokens
+                        )
         
                     query_log.append({
                         "iteration": t,
@@ -187,10 +178,11 @@ if __name__ == "__main__":
                 
                 # Calculate metrics
                 avg_tokens_per_sec = out_tokens / batch_duration if batch_duration > 0 else 0
-                monitor.update_llm_metrics(
-                    e2e_latency=batch_duration,
-                    tokens_per_sec=avg_tokens_per_sec
-                )
+                if monitor:
+                    monitor.update_llm_metrics(
+                        e2e_latency=batch_duration,
+                        tokens_per_sec=avg_tokens_per_sec
+                    )
         
                 print(f"Queries processed: {len(outputs)}, total output tokens: {out_tokens}\n")
         

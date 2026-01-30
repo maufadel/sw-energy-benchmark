@@ -107,14 +107,15 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
             queue_time = request_metrics.scheduled_ts - request_metrics.queued_ts
         
         # Update LLM-specific metrics
-        monitor.update_llm_metrics(
-            ttft=ttft,
-            e2e_latency=e2e_latency,
-            success=True,
-            prompt_tokens=prompt_tokens,
-            generation_tokens=num_generation_tokens,
-            tokens_per_sec=tokens_per_sec
-        )
+        if monitor:
+            monitor.update_llm_metrics(
+                ttft=ttft,
+                e2e_latency=e2e_latency,
+                success=True,
+                prompt_tokens=prompt_tokens,
+                generation_tokens=num_generation_tokens,
+                tokens_per_sec=tokens_per_sec
+            )
         
         return {
             "iteration": iteration,
@@ -340,6 +341,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result_folder_path = args.result_folder
     utils.load_config(args.config)
+    utils.fix_seeds()
     if not os.path.exists(result_folder_path):
         os.makedirs(result_folder_path)
         print(f"Created directory: {result_folder_path}")
