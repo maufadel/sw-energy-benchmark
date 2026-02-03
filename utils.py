@@ -246,7 +246,7 @@ def fix_seeds(seed=42):
 
 def wait_for_gpu_cooldown(
     gpu_handle,
-    idle_time=60,          # seconds to wait at idle
+    idle_time=120,          # seconds to wait at idle
     check_interval=5,       # seconds
     util_threshold=1,       # %
     power_stability_w=3,    # watts
