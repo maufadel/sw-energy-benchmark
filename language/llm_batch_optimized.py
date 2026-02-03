@@ -116,11 +116,13 @@ if __name__ == "__main__":
                 ############################
                 # Batch warm-up (discarded)
                 ############################
+                print("Warming up")
                 warmup_prompt = dataset[:1]
                 _ = llm.generate(warmup_prompt, sampling_params)
+                print("Finished warmup.")
 
                 torch.cuda.synchronize()
-                time.sleep(2)
+                utils.wait_for_gpu_cooldown(handle)
 
                 ############################
                 # Monitoring + energy
