@@ -36,7 +36,7 @@ CONTEXT_LENGTH = None
 
 
 def load_config(config_path='config.yaml'):
-    global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS, WARMUP_DURATION
+    global config, CUDA_VISIBLE_DEVICES, GPU_INDICES, ITERATIONS, MAX_TEST_DURATION, LAMBDA_QPS_ARRAY, LLM_MODELS, CONTEXT_LENGTH, WARMUP_DURATION
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -243,17 +243,51 @@ def fix_seeds(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def wait_for_gpu_cooldown(gpu_handle, target_temp=55, check_interval=5):
-    """Wait until the GPU temperature drops below the target temperature."""
-    gpu_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
-    print(f"GPU temperature before cooldown: {gpu_temp}°C")
 
-    while gpu_temp > target_temp:
-        print(f"Waiting for GPU to cool down... Current temp: {gpu_temp}°C")
+def wait_for_gpu_cooldown(
+    gpu_handle,
+    idle_time=60,          # seconds to wait at idle
+    check_interval=5,       # seconds
+    util_threshold=1,       # %
+    power_stability_w=3,    # watts
+):
+    """
+    Wait until the GPU has been idle and power-stable for a fixed duration.
+    """
+
+    start_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
+    print(f"GPU temperature before cooldown: {start_temp}°C")
+
+    stable_start = None
+    last_power = None
+
+    while True:
+        util = nvmlDeviceGetUtilizationRates(gpu_handle).gpu
+        power = nvmlDeviceGetPowerUsage(gpu_handle) / 1000.0  # mW → W
+        temp = nvmlDeviceGetTemperature(gpu_handle, 0)
+
+        print(
+            f"Cooldown check | Temp: {temp}°C | Util: {util}% | Power: {power:.1f} W"
+        )
+
+        idle = (util <= util_threshold)
+
+        power_stable = (last_power is not None and abs(power - last_power) <= power_stability_w)
+
+        if idle and power_stable:
+            if stable_start is None:
+                stable_start = time.time()
+            elif time.time() - stable_start >= idle_time:
+                print(
+                    f"GPU idle and stable for {idle_time}s. "
+                    f"Final temp: {temp}°C. Continue."
+                )
+                break
+        else:
+            stable_start = None
+
+        last_power = power
         time.sleep(check_interval)
-        gpu_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
-
-    print(f"GPU cooled down to {gpu_temp}°C. Continue.")
 
 
 def cleanup_gpu_memory(verbose=True):
@@ -569,37 +603,64 @@ def download_model(model_name: str):
         print(f"--> ERROR: Failed to download model '{model_name}'.")
         print(f"    Reason: {e}\n")
 
-def create_vllm(model_name):
+def create_vllm(model_name, async_mode=False):
+    """
+    Create a vLLM instance (sync or async).
+    
+    Args:
+        model_name: Name/path of the model to load
+        async_mode: If True, returns AsyncLLMEngine; if False, returns LLM
+    
+    Returns:
+        LLM or AsyncLLMEngine instance
+    """
     dtype = "auto"  # Default dtype
     device_name = "CPU"
-
+    gpu_memory_utilization = 0.9  # Default value
+    
     # Check if a CUDA-enabled GPU is available
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name(0)
+        total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        
+        # Memory utilization for GPUs with <20GB VRAM is 0.8, for other devices we use 0.9.
+        # Without this, most models crash on GPUs with low VRAM.
+        if total_vram_gb < 20:
+            gpu_memory_utilization = 0.8
+            print(f"GPU VRAM: {total_vram_gb:.2f}GB. Setting gpu_memory_utilization=0.8")
+        else:
+            print(f"GPU VRAM: {total_vram_gb:.2f}GB. Setting gpu_memory_utilization=0.9")
+        
         # Set dtype based on the detected GPU name
         if any(gpu in device_name for gpu in ["V100", "T4"]):
+            print(f"Setting dtype to float16 because device does not support bfloat.")
             dtype = "float16"
-        elif any(gpu in device_name for gpu in ["H100", "H200", "A100", "L4", "A30"]):
-            dtype = "auto"
-        # For other GPUs, the default 'auto' is generally a safe choice.
+    
     print(f"Detected device: {device_name}.")
     print(f"Using dtype '{dtype}' for model '{model_name}'.")
-
+    
     # Common benchmark parameters
     llm_args = {
         "model": model_name,
         "dtype": dtype,
         "trust_remote_code": True,
-        "gpu_memory_utilization": 0.9,
+        "gpu_memory_utilization": gpu_memory_utilization,
         "max_model_len": CONTEXT_LENGTH,  # input context
         # We leave scheduler policy, KV cache block, tensor parallelism, paged attention defaults
-        # to vLLM defaults unless specified here
+        # to vLLM defaults.
     }
     
     try:
-        print("Attempting to load model with default settings...")
-        llm = LLM(**llm_args)
-        print(f"Model '{model_name}' loaded successfully with benchmark defaults.")
+        if async_mode:
+            from vllm.engine.async_llm_engine import AsyncLLMEngine
+            from vllm import EngineArgs
+            
+            print("Attempting to load model in async mode with default settings...")
+            engine_args = EngineArgs(**llm_args)
+            llm = AsyncLLMEngine.from_engine_args(engine_args)
+        else:         
+            llm = LLM(**llm_args)
+        
         return llm
     except RuntimeError as e:
         error_message = str(e)

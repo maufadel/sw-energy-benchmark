@@ -86,6 +86,16 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
         response_text = final_output.outputs[0].text
         num_generation_tokens = len(final_output.outputs[0].token_ids)
         prompt_tokens = len(final_output.prompt_token_ids)
+
+        return {
+            "iteration": iteration,
+            "query_id": query_id,
+            "model": model_name,
+            "lambda_qps": lambda_qps,
+            "response_text": response_text,
+            "prompt_tokens": prompt_tokens,
+            "generation_tokens": num_generation_tokens,
+        }
         
         # Extract metrics from vLLM's RequestStateStats
         request_metrics = final_output.metrics
@@ -204,17 +214,18 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     """Run a single iteration of the benchmark."""
     print(f"Running with model {model_name} and lambda_qps {lambda_qps}")
 
-    monitor = utils.EnhancedMonitorThread(llm_engine=llm)
+    #monitor = utils.EnhancedMonitorThread(llm_engine=llm)
+    monitor = None
     meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
     
-    monitor.start()
+    #monitor.start()
     meter.begin()
     
     # Run the benchmark
     result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor, iteration)
 
     meter.end()
-    monitor.stop()
+    #monitor.stop()
     
     print(f"Processed {result['processed_queries']} queries")
     
@@ -227,7 +238,7 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     res["sampling_params"] = str(sampling_params)
     res["model"] = model_name
     res["lambda_qps"] = lambda_qps
-    res.update(monitor.get_all_metrics())
+    #res.update(monitor.get_all_metrics())
     res.update({
         "total_generated_tokens": result["total_generated_tokens"],
         "processed_queries": result["processed_queries"],
@@ -255,7 +266,8 @@ async def main_async(result_folder_path, handle, sampling_params, dataset):
 
         try:
             print(f"Loading model {model_name}")
-            llm = utils.create_vllm(model_name, async_mode=True)
+            engine_args = AsyncEngineArgs(model=model_name)
+            llm = AsyncLLMEngine.from_engine_args(engine_args)
             llm_loaded = True
 
             # Warmup iteration.
@@ -340,7 +352,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result_folder_path = args.result_folder
     utils.load_config(args.config)
-    utils.fix_seeds()
     if not os.path.exists(result_folder_path):
         os.makedirs(result_folder_path)
         print(f"Created directory: {result_folder_path}")
