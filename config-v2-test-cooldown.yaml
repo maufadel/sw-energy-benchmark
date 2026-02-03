@@ -1,0 +1,19 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings
+ITERATIONS: 5
+MAX_TEST_DURATION: 300
+CONTEXT_LENGTH: 1024
+WARMUP_DURATION: 60
+
+# Server experiment settings
+# 0.017: 1 request every 60 seconds
+# 0.33: 1 request every 3 seconds
+LAMBDA_QPS_ARRAY:
+  - 0.017
+  - 0.33
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "meta-llama/Llama-3.1-8B-Instruct"

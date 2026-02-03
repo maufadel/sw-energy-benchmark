@@ -210,6 +210,7 @@ class EnhancedMonitorThread(threading.Thread):
             all_metrics[f"gpu_{i}_memory_used_mb"] = self.gpu_mem_utilization[i]
             all_metrics[f"gpu_{i}_utilization_percent"] = self.gpu_utilization[i]
             all_metrics[f"gpu_{i}_power_draw_watts"] = self.gpu_power_draw[i]
+            all_metrics[f"gpu_{i}_temp"] = self.gpu_temp[i]
         all_metrics["cpu_memory_used_mb"] = self.ram_utilization
         all_metrics["cpu_utilization_percent"] = self.cpu_utilization
         
@@ -246,7 +247,7 @@ def fix_seeds(seed=42):
 
 def wait_for_gpu_cooldown(
     gpu_handle,
-    idle_time=120,          # seconds to wait at idle
+    idle_time=150,          # seconds to wait at idle
     check_interval=5,       # seconds
     util_threshold=1,       # %
     power_stability_w=3,    # watts
@@ -653,10 +654,10 @@ def create_vllm(model_name, async_mode=False):
     try:
         if async_mode:
             from vllm.engine.async_llm_engine import AsyncLLMEngine
-            from vllm import EngineArgs
+            from vllm import AsyncEngineArgs
             
             print("Attempting to load model in async mode with default settings...")
-            engine_args = EngineArgs(**llm_args)
+            engine_args = AsyncEngineArgs(**llm_args)
             llm = AsyncLLMEngine.from_engine_args(engine_args)
         else:         
             llm = LLM(**llm_args)
@@ -671,7 +672,8 @@ def get_sampling_params():
     return SamplingParams(
         temperature=0.0,
         top_p=1.0,
-        top_k=1,
+        top_k=0,
         max_tokens=256,
-        repetition_penalty=1.0
+        repetition_penalty=1.0,
+        seed=123,
     )
