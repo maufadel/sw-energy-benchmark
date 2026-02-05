@@ -5,6 +5,7 @@ from pynvml import (
     nvmlDeviceGetClockInfo, NVML_CLOCK_SM
 )
 import time
+from datetime import datetime
 import threading
 import psutil
 import os
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 
 from huggingface_hub import snapshot_download, HfFolder
 from dotenv import load_dotenv
+from energymeter import EnergyMeter
 
 import torch
 from vllm import LLM, SamplingParams
@@ -71,11 +73,8 @@ class EnhancedMonitorThread(threading.Thread):
     aligned with NVIDIA NIM and vLLM standards.
     
     Works with both server (AsyncLLMEngine) and batch (LLM) workloads.
-    
-    Metric name changes from original MonitorThread:
-    - No changes to existing metric names
-    
-    New LLM-specific metrics added:
+    It uses EnergyMeter internally for GPU energy, power, temperature, and utilization tracking.
+
     - time_to_first_token_seconds_events: List of TTFT measurements per request
     - e2e_request_latency_seconds_events: List of end-to-end latencies per request
     - request_success_total: Counter of successful requests
@@ -83,42 +82,42 @@ class EnhancedMonitorThread(threading.Thread):
     - prompt_tokens_total: Counter of prompt tokens processed
     - generation_tokens_total: Counter of generation tokens
     - tokens_per_second_events: List of per-request throughput measurements
-    - generation_tokens_total_samples: Generation token counter sampled over time
-    - prompt_tokens_total_samples: Prompt token counter sampled over time
     """
-    def __init__(self, gpu_indices=None, secs_between_samples=0.1, llm_engine=None):
+    def __init__(self, gpu_index=0, secs_between_samples=0.1, llm_engine=None,
+                 include_idle_energy=True, ignore_disk=True):
         super().__init__(daemon=True)
         
-        if gpu_indices:
-            self.gpu_indices = gpu_indices
-        else:
-            # Monitor all GPUs - will use GPU_INDICES from utils if available
-            # Otherwise default to GPU 0
-            import sys
-            if 'utils' in sys.modules:
-                self.gpu_indices = getattr(sys.modules['utils'], 'GPU_INDICES', [0])
-            else:
-                self.gpu_indices = [0]
-        
+        self.gpu_index = gpu_index
         self.secs_between_samples = secs_between_samples
         self.running = True
-        self.gpu_handles = {i: nvmlDeviceGetHandleByIndex(i) for i in self.gpu_indices}
         self.llm_engine = llm_engine
         
-        # Original metrics (unchanged names)
-        self.gpu_utilization = {i: [] for i in self.gpu_indices}
-        self.gpu_mem_utilization = {i: [] for i in self.gpu_indices}
-        self.gpu_power_draw = {i: [] for i in self.gpu_indices}
-        self.gpu_temp = {i: [] for i in self.gpu_indices}
-        self.gpu_clock = {i: [] for i in self.gpu_indices}
+        # Initialize EnergyMeter for GPU energy, power, temperature, and utilization
+        self.energy_meter = EnergyMeter(
+            label="EnhancedMonitor",
+            include_idle=include_idle_energy,
+            ignore_disk=ignore_disk,
+            gpu_index=gpu_index,
+            gpu_sampling_rate=secs_between_samples
+        )
+        
+        # Get GPU handle for memory and clock tracking (not in EnergyMeter)
+        self.gpu_handle = nvmlDeviceGetHandleByIndex(gpu_index)
+        
+        # GPU metrics NOT tracked by EnergyMeter
+        self.gpu_mem_utilization = []
+        self.gpu_clock = []
+        
+        # CPU and RAM metrics
         self.cpu_utilization = []
         self.ram_utilization = []
         
-        # New LLM-specific metrics (NVIDIA NIM / vLLM aligned)
-        # These are per-request events collected as they complete
+        # These are per-request events collected as they complete (aligned with NVIDIA NIM metrics)
         self.time_to_first_token_seconds_events = []
         self.e2e_request_latency_seconds_events = []
         self.tokens_per_second_events = []
+        self.request_prompt_tokens = []
+        self.request_generation_tokens = []
         
         # These are counters
         self.request_success_total = 0
@@ -126,43 +125,39 @@ class EnhancedMonitorThread(threading.Thread):
         self.prompt_tokens_total = 0
         self.generation_tokens_total = 0
         
-        # These are sampled periodically in run() loop (same frequency as GPU/CPU)
-        self.generation_tokens_total_samples = []
-        self.prompt_tokens_total_samples = []
-        
         # Internal tracking for derived metrics
         self._lock = threading.Lock()
         self._last_snapshot_time = time.time()
         self._last_generation_tokens = 0
+        self._started_flag = False
         
+    def start(self):
+        """Start monitoring and energy measurement."""
+        if not self._started_flag:
+            self.energy_meter.begin()
+            self._started_flag = True
+            super().start()
+    
     def run(self):
+        """Main monitoring loop - samples metrics not covered by EnergyMeter."""
         while self.running:
-            for i in self.gpu_indices:
-                handle = self.gpu_handles[i]
-                util = nvmlDeviceGetUtilizationRates(handle)
-                mem = nvmlDeviceGetMemoryInfo(handle)
-                # Convert power to Watts
-                power = nvmlDeviceGetPowerUsage(handle) / 1000.0
-                temp = nvmlDeviceGetTemperature(handle, 0)
-                clock = nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM)
-                self.gpu_utilization[i].append(util.gpu)
-                self.gpu_mem_utilization[i].append(mem.used / (1024 * 1024))  # in MB
-                self.gpu_power_draw[i].append(power)
-                self.gpu_temp[i].append(temp)
-                self.gpu_clock[i].append(clock)
+            # Sample GPU memory and clock (not in EnergyMeter)
+            mem = nvmlDeviceGetMemoryInfo(self.gpu_handle)
+            clock = nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_SM)
+            self.gpu_mem_utilization.append(mem.used / (1024 * 1024))  # in MB
+            self.gpu_clock.append(clock)
             
+            # Sample CPU and RAM
             self.ram_utilization.append(psutil.virtual_memory().used / (1024 * 1024))
             self.cpu_utilization.append(psutil.cpu_percent())
-            
-            # Sample LLM metrics at same frequency as GPU/CPU
-            with self._lock:
-                self.generation_tokens_total_samples.append(self.generation_tokens_total)
-                self.prompt_tokens_total_samples.append(self.prompt_tokens_total)
             
             time.sleep(self.secs_between_samples)
     
     def stop(self):
+        """Stop monitoring and energy measurement."""
         self.running = False
+        if self._started_flag:
+            self.energy_meter.end()
         self.join()
     
     def update_llm_metrics(self, ttft=None, e2e_latency=None, success=False, failure=False,
@@ -195,24 +190,58 @@ class EnhancedMonitorThread(threading.Thread):
                 self.request_failure_total += 1
             if prompt_tokens > 0:
                 self.prompt_tokens_total += prompt_tokens
+                self.request_prompt_tokens.append(prompt_tokens)
             if generation_tokens > 0:
                 self.generation_tokens_total += generation_tokens
+                self.request_generation_tokens.append(generation_tokens)
     
     def get_all_metrics(self):
         """
         Returns all metrics including original and new LLM-specific metrics.
         Original metric names are unchanged.
+        
+        GPU power, utilization, and temperature come from EnergyMeter.
+        GPU memory and clock come from this thread's direct sampling.
         """
         all_metrics = {}
         
-        # Original metrics (unchanged names)
-        for i in self.gpu_indices:
-            all_metrics[f"gpu_{i}_memory_used_mb"] = self.gpu_mem_utilization[i]
-            all_metrics[f"gpu_{i}_utilization_percent"] = self.gpu_utilization[i]
-            all_metrics[f"gpu_{i}_power_draw_watts"] = self.gpu_power_draw[i]
-            all_metrics[f"gpu_{i}_temp"] = self.gpu_temp[i]
+        # Get GPU samples from EnergyMeter's thread
+        gpu_samples = self.energy_meter.thread_gpu.get_samples()
+        
+        if len(gpu_samples) > 0:
+            # Extract power, utilization, and temperature from EnergyMeter samples
+            power_samples = [s['power_w'] for s in gpu_samples]
+            util_samples = [s['gpu_util'] for s in gpu_samples]
+            temp_samples = [s['temp_c'] for s in gpu_samples]
+        else:
+            # Fallback to empty lists if no samples
+            power_samples = []
+            util_samples = []
+            temp_samples = []
+
+        # Date and time.
+        all_metrics['measurement_duration'] = self.energy_meter.duration
+        all_metrics['measurement_timestamp'] = self.energy_meter.start_time
+        all_metrics['measurement_datetime'] = datetime.fromtimestamp(all_metrics["measurement_timestamp"], 
+                                                                     datetime.now().astimezone().tzinfo).isoformat()
+        
+        # GPU metrics - maintain naming with _0 for compatibility
+        all_metrics[f"gpu_0_memory_used_mb"] = self.gpu_mem_utilization
+        all_metrics[f"gpu_0_utilization_percent"] = util_samples  # from EnergyMeter
+        all_metrics[f"gpu_0_power_draw_watts"] = power_samples    # from EnergyMeter
+        all_metrics[f"gpu_0_temp"] = temp_samples                 # from EnergyMeter
+        all_metrics[f"gpu_0_clock"] = self.gpu_clock
+        
+        # CPU and RAM metrics
         all_metrics["cpu_memory_used_mb"] = self.ram_utilization
         all_metrics["cpu_utilization_percent"] = self.cpu_utilization
+        
+        # Energy metrics from EnergyMeter
+        energy_components = self.energy_meter.get_total_joules_per_component()
+        all_metrics["cpu_energy"] = np.sum(energy_components["cpu"])
+        all_metrics["dram_energy"] = np.sum(energy_components["dram"])
+        all_metrics["gpu_energy"] = energy_components["gpu"]
+        all_metrics["disk_energy"] = energy_components["disk"]
         
         # New LLM-specific metrics
         with self._lock:
@@ -225,11 +254,9 @@ class EnhancedMonitorThread(threading.Thread):
             all_metrics["request_success_total"] = self.request_success_total
             all_metrics["request_failure_total"] = self.request_failure_total
             all_metrics["prompt_tokens_total"] = self.prompt_tokens_total
+            all_metrics["request_prompt_tokens"] = self.request_prompt_tokens
             all_metrics["generation_tokens_total"] = self.generation_tokens_total
-            
-            # Time-series sampled at same frequency as GPU/CPU metrics
-            all_metrics["generation_tokens_total_samples"] = self.generation_tokens_total_samples.copy()
-            all_metrics["prompt_tokens_total_samples"] = self.prompt_tokens_total_samples.copy()
+            all_metrics["request_generation_tokens"] = self.request_generation_tokens
         
         return all_metrics
 
@@ -247,48 +274,64 @@ def fix_seeds(seed=42):
 
 def wait_for_gpu_cooldown(
     gpu_handle,
-    idle_time=120,          # seconds to wait at idle
+    idle_time=30,          # seconds to wait at idle
     check_interval=5,       # seconds
     util_threshold=1,       # %
     power_stability_w=3,    # watts
+    temperature_threshold=65,  # °C - don't start if hotter than this
+    max_wait=300,          # 5 min maximum - fail gracefully if stuck
 ):
     """
-    Wait until the GPU has been idle and power-stable for a fixed duration.
+    Wait until the GPU has been idle, power-stable, and cool enough for a fixed duration.
+    
+    Returns:
+        bool: True if conditions met, False if timeout
     """
-
     start_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
+    start_time = time.time()
     print(f"GPU temperature before cooldown: {start_temp}°C")
-
+    
     stable_start = None
     last_power = None
-
-    while True:
+    
+    while time.time() - start_time < max_wait:
         util = nvmlDeviceGetUtilizationRates(gpu_handle).gpu
         power = nvmlDeviceGetPowerUsage(gpu_handle) / 1000.0  # mW → W
         temp = nvmlDeviceGetTemperature(gpu_handle, 0)
-
+        
         print(
             f"Cooldown check | Temp: {temp}°C | Util: {util}% | Power: {power:.1f} W"
         )
-
+        
         idle = (util <= util_threshold)
-
         power_stable = (last_power is not None and abs(power - last_power) <= power_stability_w)
-
-        if idle and power_stable:
+        temp_ok = (temp <= temperature_threshold)
+        
+        if idle and power_stable and temp_ok:
             if stable_start is None:
                 stable_start = time.time()
             elif time.time() - stable_start >= idle_time:
+                elapsed = time.time() - start_time
                 print(
-                    f"GPU idle and stable for {idle_time}s. "
-                    f"Final temp: {temp}°C. Continue."
+                    f"✓ GPU ready after {elapsed:.0f}s "
+                    f"(stable for {idle_time}s at {temp}°C)"
                 )
-                break
+                return True
         else:
+            if not temp_ok:
+                print(f"Waiting for temp to drop below {temperature_threshold}°C and/or power to stabilise")
             stable_start = None
-
+        
         last_power = power
         time.sleep(check_interval)
+    
+    # Timeout
+    final_temp = nvmlDeviceGetTemperature(gpu_handle, 0)
+    print(
+        f"Cooldown timeout after {max_wait}s. "
+        f"Final temp: {final_temp}°C (threshold: {temperature_threshold}°C)"
+    )
+    return False
 
 
 def cleanup_gpu_memory(verbose=True):

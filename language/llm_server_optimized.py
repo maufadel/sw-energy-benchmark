@@ -7,7 +7,6 @@ import pandas as pd
 from datetime import datetime
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlShutdown
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
-from energymeter import EnergyMeter
 from datasets import load_dataset
 import sys
 import os
@@ -205,29 +204,20 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     print(f"Running with model {model_name} and lambda_qps {lambda_qps}")
 
     monitor = utils.EnhancedMonitorThread(llm_engine=llm)
-    meter = EnergyMeter(label="Chatbot", include_idle=True, ignore_disk=True)
-    
     monitor.start()
-    meter.begin()
     
     # Run the benchmark
     result = await run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor, iteration)
 
-    meter.end()
     monitor.stop()
     
     print(f"Processed {result['processed_queries']} queries")
     
     # Compile results
-    res = {k: np.sum(v) if isinstance(v, list) else v for k, v in meter.get_total_joules_per_component().items()}
-    res["measurement_duration"] = meter.duration
-    res["measurement_timestamp"] = meter.start_time
-    res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
-                                                         datetime.now().astimezone().tzinfo).isoformat()
+    res = monitor.get_all_metrics()
     res["sampling_params"] = str(sampling_params)
     res["model"] = model_name
     res["lambda_qps"] = lambda_qps
-    res.update(monitor.get_all_metrics())
     res.update({
         "total_generated_tokens": result["total_generated_tokens"],
         "processed_queries": result["processed_queries"],
@@ -264,6 +254,7 @@ async def main_async(result_folder_path, handle, sampling_params, dataset):
                 llm, dataset, sampling_params, max(LAMBDA_QPS_ARRAY), 
                 model_name, WARMUP_DURATION, handle, -1
             )
+            torch.cuda.synchronize()
             utils.wait_for_gpu_cooldown(handle)
             
             for lambda_qps in LAMBDA_QPS_ARRAY:

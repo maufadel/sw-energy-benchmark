@@ -15,7 +15,6 @@ import argparse
 import random
 
 from vllm import LLM, SamplingParams
-from energymeter import EnergyMeter
 from datasets import load_dataset
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -124,20 +123,9 @@ if __name__ == "__main__":
                 torch.cuda.synchronize()
                 utils.wait_for_gpu_cooldown(handle)
 
-                ############################
-                # Monitoring + energy
-                ############################
-        
-                # Initialize energy meter
-                meter = EnergyMeter(label="Batch LLM", include_idle=True, ignore_disk=True)
-        
-                # Start monitoring with EnhancedMonitorThread
+                # Monitoring 
                 monitor = utils.EnhancedMonitorThread(llm_engine=llm)
                 monitor.start()
-        
-                # Start energy measurement
-                start_time = time.time()
-                meter.begin()
 
                 # Process all queries
                 batch_start = datetime.now()
@@ -148,9 +136,6 @@ if __name__ == "__main__":
 
                 # Stop monitoring
                 monitor.stop()
-        
-                # Stop energy meter
-                meter.end()
 
                 batch_duration = (batch_end - batch_start).total_seconds()
                 
@@ -189,18 +174,13 @@ if __name__ == "__main__":
                 print(f"Queries processed: {len(outputs)}, total output tokens: {out_tokens}\n")
         
                 # Store results
-                res = {k: np.sum(v) for k, v in meter.get_total_joules_per_component().items()}
+                res = monitor.get_all_metrics()
                 res["iteration"] = t
-                res["measurement_duration"] = meter.duration
-                res["measurement_timestamp"] = meter.start_time
-                res["measurement_datetime"] = datetime.fromtimestamp(res["measurement_timestamp"], 
-                                                                     datetime.now().astimezone().tzinfo).isoformat()
                 res["sampling_params"] = str(sampling_params)
                 res["model"] = model_name
                 res["processed_queries"] = len(dataset)
                 res["batch_duration_seconds"] = batch_duration
                 res["avg_tokens_per_second"] = avg_tokens_per_sec
-                res.update(monitor.get_all_metrics())
                 all_results.append(res)
         
                 # Save results

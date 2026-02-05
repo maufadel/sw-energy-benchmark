@@ -205,7 +205,7 @@ echo -e "\n" >> "$SYSTEM_INFO_FILE"
 # ---------------------------------------
 # Install Python virtual environment.
 echo "[$(date)] Creating Python virtual environment..."
-uv venv --python python3.11 --clear .venv
+uv venv --python python3.11 .venv
 echo "[$(date)] Activating virtual environment..."
 source .venv/bin/activate
 
@@ -240,15 +240,15 @@ else
 
         echo "[$(date)] Running llm_server_optimized.py for $temp_config..."
         # Allow script to continue even if model fails (exit code 1)
-        #python language/llm_server_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config" || {
-        #    exit_code=$?
-        #    if [ $exit_code -eq 1 ]; then
-        #        echo "[$(date)] Model failed in server mode but continuing with next model..."
-        #    else
-        #        echo "[$(date)] Unexpected error in server mode (exit code $exit_code), stopping..."
-        #        exit $exit_code
-        #    fi
-        #}
+        python language/llm_server_optimized.py "$MODEL_RESULTS_DIR" --config "$temp_config" || {
+            exit_code=$?
+            if [ $exit_code -eq 1 ]; then
+                echo "[$(date)] Model failed in server mode but continuing with next model..."
+            else
+                echo "[$(date)] Unexpected error in server mode (exit code $exit_code), stopping..."
+                exit $exit_code
+            fi
+        }
 
         echo "[$(date)] Running llm_batch_optimized.py for $temp_config..."
         # Allow script to continue even if model fails (exit code 1)

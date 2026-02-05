@@ -1,0 +1,17 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings, durations in seconds.
+ITERATIONS: 2
+MAX_TEST_DURATION: 60
+CONTEXT_LENGTH: 1024
+WARMUP_DURATION: 30
+
+# Server experiment settings
+LAMBDA_QPS_ARRAY:
+  - 0.014467592592592592
+  - 0.38580246913580245
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "Qwen/Qwen2.5-0.5B-Instruct"
