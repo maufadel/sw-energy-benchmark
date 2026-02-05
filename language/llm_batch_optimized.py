@@ -163,12 +163,10 @@ if __name__ == "__main__":
                         "timestamp": datetime.now().isoformat()
                     })
                 
-                # Calculate metrics
-                avg_tokens_per_sec = out_tokens / batch_duration if batch_duration > 0 else 0
+                # Update metrics
                 if monitor:
                     monitor.update_llm_metrics(
                         e2e_latency=batch_duration,
-                        tokens_per_sec=avg_tokens_per_sec
                     )
         
                 print(f"Queries processed: {len(outputs)}, total output tokens: {out_tokens}\n")
@@ -178,9 +176,8 @@ if __name__ == "__main__":
                 res["iteration"] = t
                 res["sampling_params"] = str(sampling_params)
                 res["model"] = model_name
-                res["processed_queries"] = len(dataset)
-                res["batch_duration_seconds"] = batch_duration
-                res["avg_tokens_per_second"] = avg_tokens_per_sec
+                res["queries_submitted"] = len(dataset)
+                res["processed_queries"] = len(outputs)
                 all_results.append(res)
         
                 # Save results

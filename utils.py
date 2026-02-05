@@ -250,7 +250,7 @@ class EnhancedMonitorThread(threading.Thread):
             all_metrics["e2e_request_latency_seconds_events"] = self.e2e_request_latency_seconds_events.copy()
             all_metrics["tokens_per_second_events"] = self.tokens_per_second_events.copy()
             
-            # Counter totals (final values)
+            # Counter totals and lists (final values)
             all_metrics["request_success_total"] = self.request_success_total
             all_metrics["request_failure_total"] = self.request_failure_total
             all_metrics["prompt_tokens_total"] = self.prompt_tokens_total

@@ -146,7 +146,6 @@ async def process_single_request(llm, prompt, sampling_params, request_id, query
 async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, test_duration, monitor, iteration):
     """Run async benchmark with open-loop query generation."""
     query_log = []
-    total_generated_tokens = 0
     processed_queries = 0
     queries_submitted = 0
     
@@ -188,12 +187,10 @@ async def run_benchmark(llm, dataset, sampling_params, lambda_qps, model_name, t
             print(f"Error in request: {result}")
         else:
             query_log.append(result)
-            total_generated_tokens += result["generation_tokens"]
             processed_queries += 1
     
     return {
         "query_log": query_log,
-        "total_generated_tokens": total_generated_tokens,
         "processed_queries": processed_queries,
         "queries_submitted": queries_submitted
     }
@@ -218,8 +215,8 @@ async def run_iteration(llm, dataset, sampling_params, lambda_qps, model_name, t
     res["sampling_params"] = str(sampling_params)
     res["model"] = model_name
     res["lambda_qps"] = lambda_qps
+    res["iteration"] = iteration
     res.update({
-        "total_generated_tokens": result["total_generated_tokens"],
         "processed_queries": result["processed_queries"],
         "queries_submitted": result["queries_submitted"],
     })
