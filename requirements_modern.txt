@@ -6,6 +6,4 @@ pyyaml
 transformers==4.56.0
 nvidia-ml-py==13.590.48
 setuptools # for triton
-
-# local
-energymeter @ file:EnergyMeter
+ai-energymeter==2.0.2
