@@ -54,7 +54,7 @@ LLM_MODELS:
   - "Qwen/Qwen3-14B"
   - "google/gemma-3-12b-it"
   - "microsoft/phi-4"
-  - "openai/gpt-oss-20b"
+  - "unsloth/gpt-oss-20b-BF16"
   - "google/gemma-3-27b-it"
   - "mistralai/Mistral-Small-24B-Instruct-2501"
   - "internlm/internlm2_5-20b-chat"
