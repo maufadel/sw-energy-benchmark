@@ -10,13 +10,13 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./run_all_slurm.sh --config <file> --partition <name> --nodelist <node> --time <minutes> [options]
-  ./run_all_slurm.sh --resume <dir>  --partition <name> --nodelist <node> --time <minutes> [options]
+  ./run_all_slurm.sh --config <file> --partition <name> --nodelist <nodes> --time <minutes> [options]
+  ./run_all_slurm.sh --resume <dir>  --partition <name> --nodelist <nodes> --time <minutes> [options]
 
 Required flags:
   --config <file>       Main YAML config file (mutually exclusive with --resume)
   --partition <name>    SLURM partition (e.g., gpu, gpu_top)
-  --nodelist <node>     Target node (e.g., sanfrancisco, trinity)
+  --nodelist <nodes>    Comma-separated list of target nodes (e.g., losangeles,sanfrancisco)
   --time <minutes>      Job time limit in minutes
 
 Optional flags:
@@ -228,7 +228,7 @@ create_batch_configs() {
 log_message "--- Orchestration Script Started ---"
 log_message "Configuration:"
 log_message "  Partition:    $PARTITION"
-log_message "  Node:         $NODELIST"
+log_message "  Nodes:        $NODELIST"
 log_message "  Time limit:   $TIME minutes"
 [ -n "$ACCOUNT" ] && log_message "  Account:      $ACCOUNT"
 [ -n "$GRES" ]    && log_message "  GRES:         $GRES"

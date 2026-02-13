@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # GPU-aware wrapper for SLURM orchestration.
-# Resolves SLURM parameters from a GPU mapping table and distributes
-# models round-robin across multiple nodes of the same GPU type.
+# Resolves SLURM parameters from a GPU mapping table and passes the full
+# node list to SLURM, letting its scheduler pick the least-loaded node
+# for each job.
 
 set -euo pipefail
 
@@ -21,21 +22,26 @@ Optional flags:
   --resume <dir>        Resume from existing temp dir (mutually exclusive with --config)
   --account <name>      SLURM account (default: init)
   --batch-size <n>      Models per batch config (default: 1)
-  --max-jobs <n>        Max concurrent SLURM jobs per node (default: 500)
+  --max-jobs <n>        Max concurrent SLURM jobs (default: 500)
   --nodes <list>        Comma-separated node subset override
   --dry-run             Pass through to run_all_slurm.sh
   -h, --help            Show this help message
 
 GPU types and their defaults:
-  V100       partition=gpu,     time=4320, nodes: losangeles,sanfrancisco,sandiego
-  A100_SXM   partition=gpu,     time=4320, nodes: sacramento
-  A100_PCIe  partition=gpu_top, time=1440, gres=gpu:a100pcie:1, nodes: fresko
-  H100       partition=gpu_top, time=1440, nodes: sanjose
-  H200       partition=gpu_top, time=1440, nodes: trinity
-  L40S       partition=gpu_top, time=1440, gres=gpu:l40spcie:1, nodes: fresko
+  V100       partition=gpu,     time=180, gres=gpu:v100sxm:1,  nodes: losangeles,sanfrancisco,sandiego
+  A100_SXM   partition=gpu,     time=180, gres=gpu:a100sxm:1,  nodes: sacramento
+  A100_PCIe  partition=gpu_top, time=180, gres=gpu:a100pcie:1, nodes: fresko
+  H100       partition=gpu_top, time=180, gres=gpu:h100pcie:1, nodes: sanjose
+  H200       partition=gpu_top, time=180, gres=gpu:h200sxm:1,  nodes: trinity
+  L40S       partition=gpu_top, time=180, gres=gpu:l40spcie:1, nodes: fresko
+
+Slurm scheduling:
+  Jobs are submitted with the full node list. Slurm's scheduler picks
+  whichever node has resources available first, avoiding idle nodes
+  while others are overloaded.
 
 Examples:
-  # 50 models across 3 V100 nodes (~17 per node):
+  # 50 models across 3 V100 nodes (Slurm picks the free one):
   ./run_benchmark_gpu.sh --gpu V100 --config config-v2.yaml
 
   # Single H200 node:
@@ -128,37 +134,37 @@ GPU_NODES=""
 case "$GPU_TYPE" in
     V100)
         GPU_PARTITION="gpu"
-        GPU_TIME=4320
-        GPU_GRES=""
+        GPU_TIME=180
+        GPU_GRES="gpu:v100sxm:1"
         GPU_NODES="losangeles,sanfrancisco,sandiego"
         ;;
     A100_SXM)
         GPU_PARTITION="gpu"
-        GPU_TIME=4320
-        GPU_GRES=""
+        GPU_TIME=180
+        GPU_GRES="gpu:a100sxm:1"
         GPU_NODES="sacramento"
         ;;
     A100_PCIe)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=1440
+        GPU_TIME=180
         GPU_GRES="gpu:a100pcie:1"
         GPU_NODES="fresko"
         ;;
     H100)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=1440
-        GPU_GRES=""
+        GPU_TIME=180
+        GPU_GRES="gpu:h100pcie:1"
         GPU_NODES="sanjose"
         ;;
     H200)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=1440
-        GPU_GRES=""
+        GPU_TIME=180
+        GPU_GRES="gpu:h200sxm:1"
         GPU_NODES="trinity"
         ;;
     L40S)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=1440
+        GPU_TIME=180
         GPU_GRES="gpu:l40spcie:1"
         GPU_NODES="fresko"
         ;;
@@ -181,9 +187,6 @@ if [ -n "$NODES_OVERRIDE" ]; then
     GPU_NODES="$NODES_OVERRIDE"
 fi
 
-# Build node array
-IFS=',' read -ra NODE_ARRAY <<< "$GPU_NODES"
-
 # --- Auto-derive paths ---
 if [ -n "$CONFIG" ]; then
     CONFIG_BASENAME=$(basename "$CONFIG" .yaml)
@@ -191,7 +194,7 @@ else
     CONFIG_BASENAME=$(basename "$RESUME_DIR")
 fi
 
-TOP_TEMP_DIR="temp_configs_gpu_${CONFIG_BASENAME}_${GPU_TYPE}"
+TEMP_DIR="temp_configs_gpu_${CONFIG_BASENAME}_${GPU_TYPE}"
 LOG_FILE="run_benchmark_gpu_${CONFIG_BASENAME}_${GPU_TYPE}.log"
 ABSOLUTE_LOG_FILE="$(pwd)/$LOG_FILE"
 
@@ -203,7 +206,7 @@ log_message() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# --- Function to Create Batch Configs (into a staging dir) ---
+# --- Function to Create Batch Configs ---
 create_batch_configs() {
     local main_config_path=$1
     local batch_size=$2
@@ -258,151 +261,67 @@ log_message "  Partition:    $GPU_PARTITION"
 log_message "  Time limit:   $GPU_TIME minutes"
 [ -n "$GPU_GRES" ] && log_message "  GRES:         $GPU_GRES"
 log_message "  Account:      $ACCOUNT"
-log_message "  Nodes:        ${NODE_ARRAY[*]}"
+log_message "  Nodes:        $GPU_NODES"
 log_message "  Batch size:   $BATCH_SIZE"
 log_message "  Max jobs:     $MAX_JOBS"
-log_message "  Temp dir:     $TOP_TEMP_DIR"
+log_message "  Temp dir:     $TEMP_DIR"
 log_message "  Log file:     $LOG_FILE"
 log_message "  Dry run:      $DRY_RUN"
 
-# --- 1. Generate & distribute configs or discover remaining work ---
+# --- 1. Generate configs or use existing resume dir ---
 if [ -n "$RESUME_DIR" ]; then
-    TOP_TEMP_DIR="$RESUME_DIR"
-    log_message "Resuming from provided temp directory: $TOP_TEMP_DIR"
-    if [ ! -d "$TOP_TEMP_DIR" ]; then
-        log_message "Error: Resume directory '$TOP_TEMP_DIR' does not exist."
+    TEMP_DIR="$RESUME_DIR"
+    log_message "Resuming from provided temp directory: $TEMP_DIR"
+    if [ ! -d "$TEMP_DIR" ]; then
+        log_message "Error: Resume directory '$TEMP_DIR' does not exist."
         exit 1
     fi
 
-    # Discover which nodes still have work
-    ACTIVE_NODES=()
-    for node in "${NODE_ARRAY[@]}"; do
-        node_dir="$TOP_TEMP_DIR/$node"
-        if [ -d "$node_dir" ]; then
-            remaining=$(find "$node_dir" -name "config_batch_*.yaml" -type f | wc -l)
-            if [ "$remaining" -gt 0 ]; then
-                ACTIVE_NODES+=("$node")
-                log_message "  Node $node: $remaining config(s) remaining"
-            else
-                log_message "  Node $node: completed (no configs remaining)"
-            fi
-        else
-            log_message "  Node $node: no directory found, skipping"
-        fi
-    done
-
-    if [ ${#ACTIVE_NODES[@]} -eq 0 ]; then
-        log_message "No remaining work found in any node subdirectory. Nothing to do."
+    remaining=$(find "$TEMP_DIR" -maxdepth 1 -name "config_batch_*.yaml" -type f | wc -l)
+    if [ "$remaining" -eq 0 ]; then
+        log_message "No remaining configs found in $TEMP_DIR. Nothing to do."
         exit 0
     fi
+    log_message "Found $remaining config(s) remaining."
 else
     log_message "Starting a new run. Generating batch configs from $CONFIG..."
+    create_batch_configs "$CONFIG" "$BATCH_SIZE" "$TEMP_DIR"
 
-    # Generate into a staging directory
-    STAGING_DIR="${TOP_TEMP_DIR}/_staging"
-    create_batch_configs "$CONFIG" "$BATCH_SIZE" "$STAGING_DIR"
-
-    # Count generated configs
-    mapfile -t BATCH_FILES < <(find "$STAGING_DIR" -name "config_batch_*.yaml" -type f | sort)
-
-    if [ ${#BATCH_FILES[@]} -eq 0 ]; then
+    remaining=$(find "$TEMP_DIR" -maxdepth 1 -name "config_batch_*.yaml" -type f | wc -l)
+    if [ "$remaining" -eq 0 ]; then
         log_message "Batch config generation failed or produced no files. Exiting."
-        rm -rf "$STAGING_DIR"
         exit 1
     fi
-
-    # Create per-node subdirectories
-    for node in "${NODE_ARRAY[@]}"; do
-        mkdir -p "$TOP_TEMP_DIR/$node"
-    done
-
-    # Distribute configs round-robin across nodes
-    num_nodes=${#NODE_ARRAY[@]}
-    for (( i=0; i<${#BATCH_FILES[@]}; i++ )); do
-        node_idx=$(( i % num_nodes ))
-        target_node="${NODE_ARRAY[$node_idx]}"
-        mv "${BATCH_FILES[$i]}" "$TOP_TEMP_DIR/$target_node/"
-    done
-
-    # Remove staging directory
-    rm -rf "$STAGING_DIR"
-
-    # Log distribution
-    log_message "Distributed ${#BATCH_FILES[@]} batch configs across ${num_nodes} node(s):"
-    ACTIVE_NODES=()
-    for node in "${NODE_ARRAY[@]}"; do
-        count=$(find "$TOP_TEMP_DIR/$node" -name "config_batch_*.yaml" -type f | wc -l)
-        log_message "  $node: $count config(s)"
-        if [ "$count" -gt 0 ]; then
-            ACTIVE_NODES+=("$node")
-        fi
-    done
+    log_message "Generated $remaining batch config(s)."
 fi
 
-# --- 2. Launch run_all_slurm.sh per node in background ---
-log_message "Launching run_all_slurm.sh for ${#ACTIVE_NODES[@]} node(s)..."
+# --- 2. Launch single run_all_slurm.sh with full node list ---
+SLURM_LOG="run_all_slurm_${CONFIG_BASENAME}_${GPU_TYPE}.log"
 
-declare -A NODE_PIDS
+CMD="./run_all_slurm.sh"
+CMD="$CMD --resume $TEMP_DIR"
+CMD="$CMD --partition $GPU_PARTITION"
+CMD="$CMD --nodelist $GPU_NODES"
+CMD="$CMD --time $GPU_TIME"
+CMD="$CMD --account $ACCOUNT"
+CMD="$CMD --max-jobs $MAX_JOBS"
+CMD="$CMD --log $SLURM_LOG"
+[ -n "$GPU_GRES" ] && CMD="$CMD --gres $GPU_GRES"
+[ "$DRY_RUN" = true ] && CMD="$CMD --dry-run"
 
-for node in "${ACTIVE_NODES[@]}"; do
-    node_dir="$TOP_TEMP_DIR/$node"
-    node_log="run_all_slurm_${CONFIG_BASENAME}_${GPU_TYPE}_${node}.log"
+log_message "Launching: $CMD"
+$CMD
+EXIT_CODE=$?
 
-    # Build the command
-    CMD="./run_all_slurm.sh"
-    CMD="$CMD --resume $node_dir"
-    CMD="$CMD --partition $GPU_PARTITION"
-    CMD="$CMD --nodelist $node"
-    CMD="$CMD --time $GPU_TIME"
-    CMD="$CMD --account $ACCOUNT"
-    CMD="$CMD --max-jobs $MAX_JOBS"
-    CMD="$CMD --log $node_log"
-    [ -n "$GPU_GRES" ] && CMD="$CMD --gres $GPU_GRES"
-    [ "$DRY_RUN" = true ] && CMD="$CMD --dry-run"
-
-    log_message "  [$node] $CMD"
-    $CMD &
-    NODE_PIDS[$node]=$!
-done
-
-# --- 3. Wait for all background PIDs ---
-log_message "Waiting for all node orchestrators to complete..."
-
-ALL_OK=true
-for node in "${ACTIVE_NODES[@]}"; do
-    pid=${NODE_PIDS[$node]}
-    if wait "$pid"; then
-        log_message "  [$node] completed successfully (PID $pid)"
-    else
-        exit_code=$?
-        log_message "  [$node] FAILED with exit code $exit_code (PID $pid)"
-        ALL_OK=false
-    fi
-done
-
-# --- 4. Cleanup ---
-if [ "$ALL_OK" = true ] && [ -d "$TOP_TEMP_DIR" ]; then
-    # Check if all node subdirs are empty
-    all_empty=true
-    for node in "${NODE_ARRAY[@]}"; do
-        node_dir="$TOP_TEMP_DIR/$node"
-        if [ -d "$node_dir" ] && [ -n "$(ls -A "$node_dir" 2>/dev/null)" ]; then
-            all_empty=false
-            break
-        fi
-    done
-
-    if [ "$all_empty" = true ]; then
-        log_message "All node subdirectories are empty. Cleaning up $TOP_TEMP_DIR..."
-        rm -rf "$TOP_TEMP_DIR"
-    else
-        log_message "Some node subdirectories still contain configs (incomplete runs). Keeping $TOP_TEMP_DIR for resume."
-    fi
+# --- 3. Cleanup ---
+if [ "$EXIT_CODE" -eq 0 ] && [ -d "$TEMP_DIR" ] && [ -z "$(ls -A "$TEMP_DIR" 2>/dev/null)" ]; then
+    log_message "All configs processed. Cleaning up $TEMP_DIR..."
+    rm -rf "$TEMP_DIR"
 fi
 
-if [ "$ALL_OK" = true ]; then
-    log_message "=== All nodes completed successfully ==="
+if [ "$EXIT_CODE" -eq 0 ]; then
+    log_message "=== All jobs completed successfully ==="
 else
-    log_message "=== Some nodes FAILED — check per-node logs ==="
-    exit 1
+    log_message "=== run_all_slurm.sh FAILED with exit code $EXIT_CODE ==="
+    exit "$EXIT_CODE"
 fi
