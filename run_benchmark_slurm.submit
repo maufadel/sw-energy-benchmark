@@ -238,8 +238,8 @@ echo "lscpu" > "$RESULTS_FILE"
 lscpu >> "$RESULTS_FILE"
 echo -e "\n" >> "$RESULTS_FILE"
 
-echo "nvidia-smi" >> "$RESULTS_FILE"
-nvidia-smi >> "$RESULTS_FILE"
+echo "nvidia-smi -q" >> "$RESULTS_FILE"
+nvidia-smi -q >> "$RESULTS_FILE"
 echo -e "\n" >> "$RESULTS_FILE"
 
 echo "free -h" >> "$RESULTS_FILE"
