@@ -47,6 +47,8 @@ def load_config(config_path='config.yaml'):
 
     # To avoid any issues.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # Force Flash Attention v2, otherwise Gemma 2 2B fails on the H100 and H200.
+    os.environ["VLLM_FLASH_ATTN_VERSION"] = 2
 
     # CUDA devices that will be used for inference. For multiple devices: "0,1".
     CUDA_VISIBLE_DEVICES = config["CUDA_VISIBLE_DEVICES"]
