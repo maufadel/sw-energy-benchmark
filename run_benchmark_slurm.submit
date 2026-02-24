@@ -12,17 +12,26 @@
 ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
 UV_PATH="/cluster/home/fues/.local/bin/uv"
 
-# Check if a config file is provided, otherwise use default
-CONFIG_FILE=${1:-config.yaml}
+# Derive config file: array mode (SLURM_ARRAY_TASK_ID + BATCH_CONFIG_DIR) or CLI arg
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ] && [ -n "${BATCH_CONFIG_DIR:-}" ]; then
+    CONFIG_FILE=$(printf "%s/config_batch_%03d.yaml" "$BATCH_CONFIG_DIR" "$SLURM_ARRAY_TASK_ID")
+else
+    CONFIG_FILE=${1:-config.yaml}
+fi
 
 echo "Using config file: $CONFIG_FILE"
 
 # --- Script Start ---
-# SLURM provides $SLURM_JOB_ID as a unique identifier for each job.
-echo "[$(date)] Starting Job ID: $SLURM_JOB_ID"
+# For array jobs, include the task ID to ensure unique directories per task
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    JOB_UNIQUE_ID="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+else
+    JOB_UNIQUE_ID="$SLURM_JOB_ID"
+fi
+echo "[$(date)] Starting Job ID: $JOB_UNIQUE_ID"
 
 # Create a job-specific virtual environment in a temporary directory
-VENV_DIR="/tmp/sw-energy-benchmark-venv-$SLURM_JOB_ID"
+VENV_DIR="/tmp/sw-energy-benchmark-venv-$JOB_UNIQUE_ID"
 mkdir -p "$VENV_DIR"
 "$UV_PATH" venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
@@ -44,6 +53,28 @@ fi
 # The `| head -n 1` ensures we only get one line of output.
 GPU_NAME=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader,nounits | head -n 1)
 echo "Detected GPU: $GPU_NAME"
+
+# --- GPU Variant Validation ---
+if [ -n "${EXPECTED_GPU:-}" ]; then
+    GPU_MISMATCH=false
+    case "$EXPECTED_GPU" in
+        H100_SXM)
+            if echo "$GPU_NAME" | grep -qi "pcie"; then
+                GPU_MISMATCH=true
+            fi
+            ;;
+        H100_PCIe)
+            if ! echo "$GPU_NAME" | grep -qi "pcie"; then
+                GPU_MISMATCH=true
+            fi
+            ;;
+    esac
+    if [ "$GPU_MISMATCH" = true ]; then
+        echo "[$(date)] GPU MISMATCH: Expected $EXPECTED_GPU but got '$GPU_NAME'. Exiting with code 42."
+        exit 42
+    fi
+    echo "[$(date)] GPU match confirmed: Expected $EXPECTED_GPU, got '$GPU_NAME'"
+fi
 
 # Default requirements file
 REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
@@ -217,9 +248,31 @@ echo "====================================================="
 #trap 'rm -rf -- "$VENV_DIR" "$HF_HOME_DIR" "VLLM_CACHE_ROOT"' EXIT
 #trap 'rm -rf -- "$VENV_DIR"' EXIT
 
-# --- Create a unique results directory for this specific job ---
-# This prevents multiple jobs from overwriting each other's results.
-JOB_RESULTS_FOLDER="$ROOT_FOLDER/results/$SLURM_JOB_ID"
+# --- Build descriptive result folder path ---
+# GPU label: prefer EXPECTED_GPU (clean), fall back to sanitized nvidia-smi name
+if [ -n "${EXPECTED_GPU:-}" ]; then
+    GPU_LABEL="$EXPECTED_GPU"
+else
+    GPU_LABEL=$(echo "$GPU_NAME" | sed 's/^NVIDIA //;s/ /_/g;s/[^A-Za-z0-9._-]/_/g')
+fi
+
+# Config label: passed from orchestrator via env, fall back to "unknown_config"
+CONFIG_LABEL="${CONFIG_BASENAME:-unknown_config}"
+
+# Run label groups all jobs from the same config+GPU run
+RUN_LABEL="${CONFIG_LABEL}__${GPU_LABEL}"
+
+# Model slug: use first model's short name (part after '/'), sanitize.
+# If batch has >1 model, fall back to the batch config filename (e.g. config_batch_003).
+model_count=$(echo "$MODELS_TO_DOWNLOAD" | grep -c . || true)
+if [ "$model_count" -eq 1 ]; then
+    MODEL_SLUG=$(echo "$MODELS_TO_DOWNLOAD" | awk -F'/' '{print $NF}' | sed 's/[^A-Za-z0-9._-]/_/g')
+else
+    MODEL_SLUG=$(basename "$CONFIG_FILE" .yaml)
+fi
+[ -z "$MODEL_SLUG" ] && MODEL_SLUG="$JOB_UNIQUE_ID"
+
+JOB_RESULTS_FOLDER="$ROOT_FOLDER/results/$RUN_LABEL/${JOB_UNIQUE_ID}__${MODEL_SLUG}"
 mkdir -p "$JOB_RESULTS_FOLDER"
 echo "[$(date)] Results will be stored in: $JOB_RESULTS_FOLDER"
 
@@ -256,12 +309,18 @@ echo "[$(date)] System info registered in $RESULTS_FILE"
 # Run the Python scripts for language
 # You can redirect the output of each script to a specific file in your job's result folder
 echo "[$(date)] Running llm_server_optimized.py..."
-#srun python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
 srun --export=ALL python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" --config "$CONFIG_FILE" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
+if [ $? -ne 0 ]; then
+    echo "[$(date)] ERROR: llm_server_optimized.py failed. Exiting with code 1."
+    exit 1
+fi
 
 echo "[$(date)] Running llm_batch_optimized.py..."
-#srun python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
 srun --export=ALL python "$ROOT_FOLDER/language/llm_batch_optimized.py" "$JOB_RESULTS_FOLDER" --config "$CONFIG_FILE" > "$JOB_RESULTS_FOLDER/llm_batch_optimized.out"
+if [ $? -ne 0 ]; then
+    echo "[$(date)] ERROR: llm_batch_optimized.py failed. Exiting with code 1."
+    exit 1
+fi
 
 # ---------------------------------------
 # Run the Python scripts for vision

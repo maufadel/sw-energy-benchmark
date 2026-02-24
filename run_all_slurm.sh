@@ -27,6 +27,9 @@ Optional flags:
   --max-jobs <n>        Max concurrent SLURM jobs before throttling (default: 500)
   --log <file>          Log file path (default: auto-derived from config basename)
   --temp-dir <dir>      Temp config directory (default: auto-derived from config basename)
+  --expected-gpu <type>  Expected GPU variant (e.g., H100_SXM, H100_PCIe) for validation
+  --max-retries <n>     Max retries on GPU mismatch, exit code 42 (default: 0)
+  --exclusive           Request exclusive node access (jobs run sequentially, safer for shared nodes)
   --dry-run             Print sbatch commands without executing
   -h, --help            Show this help message
 
@@ -60,6 +63,9 @@ BATCH_SIZE=1
 MAX_JOBS=500
 LOG_FILE=""
 TEMP_CONFIG_DIR=""
+EXPECTED_GPU=""
+MAX_RETRIES=0
+EXCLUSIVE=false
 DRY_RUN=false
 
 while [ $# -gt 0 ]; do
@@ -75,6 +81,9 @@ while [ $# -gt 0 ]; do
         --max-jobs)    MAX_JOBS="$2";    shift 2 ;;
         --log)         LOG_FILE="$2";    shift 2 ;;
         --temp-dir)    TEMP_CONFIG_DIR="$2"; shift 2 ;;
+        --expected-gpu) EXPECTED_GPU="$2"; shift 2 ;;
+        --max-retries) MAX_RETRIES="$2"; shift 2 ;;
+        --exclusive)   EXCLUSIVE=true;   shift ;;
         --dry-run)     DRY_RUN=true;     shift ;;
         -h|--help)     usage; exit 0 ;;
         *)
@@ -128,6 +137,11 @@ if ! [[ "$MAX_JOBS" =~ ^[0-9]+$ ]] || [ "$MAX_JOBS" -eq 0 ]; then
     exit 1
 fi
 
+if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+    echo "Error: --max-retries must be a non-negative integer." >&2
+    exit 1
+fi
+
 if [ -n "$CONFIG" ] && [ ! -f "$CONFIG" ]; then
     echo "Error: Config file '$CONFIG' does not exist." >&2
     exit 1
@@ -153,12 +167,11 @@ if [ -z "$LOG_FILE" ]; then
     LOG_FILE="run_all_slurm_${CONFIG_BASENAME}.log"
 fi
 
-JOBS_PER_BATCH=1
-
 # Build sbatch command
 SBATCH_CMD="sbatch --partition=$PARTITION --nodelist=$NODELIST --time=$TIME"
-[ -n "$ACCOUNT" ] && SBATCH_CMD="$SBATCH_CMD --account=$ACCOUNT"
-[ -n "$GRES" ]    && SBATCH_CMD="$SBATCH_CMD --gres=$GRES"
+[ -n "$ACCOUNT" ]       && SBATCH_CMD="$SBATCH_CMD --account=$ACCOUNT"
+[ -n "$GRES" ]          && SBATCH_CMD="$SBATCH_CMD --gres=$GRES"
+[ "$EXCLUSIVE" = true ] && SBATCH_CMD="$SBATCH_CMD --exclusive=user"
 
 # Build cleanup sbatch base (lightweight job, use cpu partition if available)
 CLEANUP_SBATCH_CMD="sbatch --partition=cpu"
@@ -236,8 +249,26 @@ log_message "  Batch size:   $BATCH_SIZE"
 log_message "  Max jobs:     $MAX_JOBS"
 log_message "  Temp dir:     $TEMP_CONFIG_DIR"
 log_message "  Log file:     $LOG_FILE"
+[ -n "$EXPECTED_GPU" ] && log_message "  Expected GPU: $EXPECTED_GPU"
+[ -n "$EXPECTED_GPU" ] && log_message "  Max retries:  $MAX_RETRIES"
+log_message "  Exclusive:    $EXCLUSIVE"
 log_message "  Dry run:      $DRY_RUN"
 log_message "  sbatch cmd:   $SBATCH_CMD"
+
+# --- Write retry state file if GPU validation is enabled ---
+RETRY_STATE_FILE=""
+if [ -n "$EXPECTED_GPU" ] && [ "$MAX_RETRIES" -gt 0 ]; then
+    RETRY_STATE_FILE="$(pwd)/.retry_state_${CONFIG_BASENAME}.env"
+    cat > "$RETRY_STATE_FILE" <<STATEEOF
+SBATCH_CMD="$SBATCH_CMD"
+CLEANUP_SBATCH_CMD="$CLEANUP_SBATCH_CMD"
+EXPECTED_GPU="$EXPECTED_GPU"
+CONFIG_BASENAME="$CONFIG_BASENAME"
+MAX_RETRIES="$MAX_RETRIES"
+LOG_FILE="$ABSOLUTE_LOG_FILE"
+STATEEOF
+    log_message "Wrote retry state file: $RETRY_STATE_FILE"
+fi
 
 # --- 1. Generate or resume batch configs ---
 if [ -n "$RESUME_DIR" ]; then
@@ -257,56 +288,69 @@ else
     fi
 fi
 
-# --- 2. Submit a SLURM Job for Each Batch Config ---
-log_message "Submitting SLURM jobs for each batch..."
+# --- 2. Submit one SLURM job per batch config ---
+log_message "Preparing per-job SLURM submission..."
 
-while IFS= read -r batch_config; do
+batch_configs=()
+while IFS= read -r f; do batch_configs+=("$f"); done \
+  < <(find "$TEMP_CONFIG_DIR" -name "config_batch_*.yaml" -type f | sort)
 
-    while true; do
-        if [ "$DRY_RUN" = true ]; then
-            break
-        fi
-        current_jobs=$(squeue -u "$USER" -h | wc -l)
-        if [ "$current_jobs" -le $((MAX_JOBS - JOBS_PER_BATCH - 1)) ]; then
-            log_message "Queue has space ($current_jobs / $MAX_JOBS). Proceeding with next batch."
-            break
-        else
-            log_message "Queue is full ($current_jobs / $MAX_JOBS). Waiting for 60 seconds..."
-            sleep 60
-        fi
-    done
+if [ ${#batch_configs[@]} -eq 0 ]; then
+    log_message "No batch configs found in $TEMP_CONFIG_DIR. Nothing to submit."
+    exit 0
+fi
 
-    log_message "-----------------------------------------------------"
-    log_message "Submitting job for batch: $batch_config"
-    log_message "-----------------------------------------------------"
+log_message "Found ${#batch_configs[@]} batch config(s) to submit (max $MAX_JOBS concurrent)."
+
+EXPORT_VARS="ALL,CONFIG_BASENAME=$CONFIG_BASENAME"
+[ -n "$EXPECTED_GPU" ] && EXPORT_VARS="${EXPORT_VARS},EXPECTED_GPU=$EXPECTED_GPU"
+JOB_SUBMIT_CMD="$SBATCH_CMD --export=$EXPORT_VARS"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+for batch_config in "${batch_configs[@]}"; do
+    # Extract model slug from config for the job name (visible in squeue)
+    model_slug=$(awk '/^LLM_MODELS:/ { in_b=1; next }
+                      in_b && /^\s*-\s*"/ {
+                          gsub(/^[^"]*"/, ""); gsub(/".*$/, "")
+                          n = split($0, a, "/"); print a[n]; exit
+                      }' "$batch_config" \
+                 | sed 's/[^A-Za-z0-9._-]/_/g' | cut -c1-40)
+    [ -z "$model_slug" ] && model_slug="$(basename "$batch_config" .yaml)"
 
     if [ "$DRY_RUN" = true ]; then
-        log_message "[DRY RUN] Would execute: $SBATCH_CMD ./run_benchmark_slurm.submit $batch_config"
+        log_message "[DRY RUN] $JOB_SUBMIT_CMD --job-name=${model_slug} ./run_benchmark_slurm.submit $batch_config"
         continue
     fi
 
-    job_ids_str=""
-    job_output=$($SBATCH_CMD ./run_benchmark_slurm.submit "$batch_config")
-    if [ $? -eq 0 ]; then
-        job_ids_str="$job_ids_str:$(echo "$job_output" | awk '{print $4}')"
+    # Throttle: wait until we are under the max-jobs limit
+    while [ "$(squeue -u "$USER" -h | wc -l)" -ge "$MAX_JOBS" ]; do
+        log_message "At max jobs ($MAX_JOBS). Waiting 60s..."
+        sleep 60
+    done
+
+    job_output=$($JOB_SUBMIT_CMD --job-name="${model_slug}" ./run_benchmark_slurm.submit "$batch_config")
+    job_id=$(echo "$job_output" | awk '{print $4}')
+    log_message "SUBMITTED job $job_id for $(basename "$batch_config")"
+
+    # Small delay between submissions to avoid hammering the SLURM controller
+    sleep $(( 5 + RANDOM % 6 ))
+
+    dep_spec="afterany:$job_id"
+    if [ -n "$RETRY_STATE_FILE" ]; then
+        retry_cmd="$SCRIPT_DIR/retry_on_gpu_mismatch.sh $job_id $batch_config 1 $RETRY_STATE_FILE"
+        $CLEANUP_SBATCH_CMD --dependency="$dep_spec" \
+          --job-name="retry_$(basename "$batch_config" .yaml)" \
+          --output=/dev/null --error=/dev/null \
+          --wrap="$retry_cmd"
     else
-        log_message "Failed to submit for $NODELIST"
-    fi
-
-    dependency_list=${job_ids_str#:}
-
-    if [ -n "$dependency_list" ]; then
-        log_message "SUBMITTED: $batch_config with Job IDs: $dependency_list"
-
         cleanup_command="echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] COMPLETED: $batch_config\" >> \"$ABSOLUTE_LOG_FILE\"; rm '$batch_config'"
-
-        cleanup_job_id=$($CLEANUP_SBATCH_CMD --dependency=afterany:"$dependency_list" --job-name="cleanup_$(basename "$batch_config" .yaml)" --output=/dev/null --error=/dev/null --wrap="$cleanup_command")
-        log_message "Submitted cleanup job for $batch_config ($cleanup_job_id)"
-    else
-        log_message "Warning: Failed to submit any jobs for $batch_config. It will not be processed or cleaned up."
+        $CLEANUP_SBATCH_CMD --dependency="$dep_spec" \
+          --job-name="cleanup_$(basename "$batch_config" .yaml)" \
+          --output=/dev/null --error=/dev/null \
+          --wrap="$cleanup_command"
     fi
-
-done < <(find "$TEMP_CONFIG_DIR" -name "config_batch_*.yaml" -type f | sort)
+done
 
 log_message "All batch jobs have been submitted and are being managed by the queue."
 

@@ -15,7 +15,7 @@ Usage:
   ./run_benchmark_gpu.sh --gpu <type> --resume <dir>  [options]
 
 Required flags:
-  --gpu <type>          GPU type: V100, A100_SXM, A100_PCIe, H100, H200, L40S
+  --gpu <type>          GPU type: V100, A100_SXM, A100_PCIe, H100_SXM, H100_PCIe, H200, L40S
   --config <file>       Main YAML config file (mutually exclusive with --resume)
 
 Optional flags:
@@ -24,16 +24,19 @@ Optional flags:
   --batch-size <n>      Models per batch config (default: 1)
   --max-jobs <n>        Max concurrent SLURM jobs (default: 500)
   --nodes <list>        Comma-separated node subset override
+  --max-retries <n>     Max GPU mismatch retries for H100 variants (default: 10)
+  --exclusive           Request exclusive node access (jobs run sequentially, safer for shared nodes)
   --dry-run             Pass through to run_all_slurm.sh
   -h, --help            Show this help message
 
 GPU types and their defaults:
-  V100       partition=gpu,     time=180, gres=gpu:v100sxm:1,  nodes: losangeles,sanfrancisco,sandiego
-  A100_SXM   partition=gpu,     time=180, gres=gpu:a100sxm:1,  nodes: sacramento
-  A100_PCIe  partition=gpu_top, time=180, gres=gpu:a100pcie:1, nodes: fresko
-  H100       partition=gpu_top, time=180, gres=gpu:h100pcie:1, nodes: sanjose
-  H200       partition=gpu_top, time=180, gres=gpu:h200sxm:1,  nodes: trinity
-  L40S       partition=gpu_top, time=180, gres=gpu:l40spcie:1, nodes: fresko
+  V100       partition=gpu,     time=360, gres=gpu:v100sxm:1,  nodes: losangeles,sanfrancisco,sandiego
+  A100_SXM   partition=gpu,     time=360, gres=gpu:a100sxm:1,  nodes: sacramento
+  A100_PCIe  partition=gpu_top, time=360, gres=gpu:a100pcie:1, nodes: fresko
+  H100_SXM   partition=gpu_top, time=360, gres=gpu:h100pcie:1, nodes: sanjose (auto-retry on GPU mismatch)
+  H100_PCIe  partition=gpu_top, time=360, gres=gpu:h100pcie:1, nodes: sanjose (auto-retry on GPU mismatch)
+  H200       partition=gpu_top, time=360, gres=gpu:h200sxm:1,  nodes: trinity
+  L40S       partition=gpu_top, time=360, gres=gpu:l40spcie:1, nodes: fresko
 
 Slurm scheduling:
   Jobs are submitted with the full node list. Slurm's scheduler picks
@@ -66,6 +69,8 @@ ACCOUNT="init"
 BATCH_SIZE=1
 MAX_JOBS=500
 NODES_OVERRIDE=""
+MAX_RETRIES=10
+EXCLUSIVE=false
 DRY_RUN=false
 
 while [ $# -gt 0 ]; do
@@ -77,6 +82,8 @@ while [ $# -gt 0 ]; do
         --batch-size)  BATCH_SIZE="$2";     shift 2 ;;
         --max-jobs)    MAX_JOBS="$2";       shift 2 ;;
         --nodes)       NODES_OVERRIDE="$2"; shift 2 ;;
+        --max-retries) MAX_RETRIES="$2";    shift 2 ;;
+        --exclusive)   EXCLUSIVE=true;      shift ;;
         --dry-run)     DRY_RUN=true;        shift ;;
         -h|--help)     usage; exit 0 ;;
         *)
@@ -125,6 +132,11 @@ if ! [[ "$MAX_JOBS" =~ ^[0-9]+$ ]] || [ "$MAX_JOBS" -eq 0 ]; then
     exit 1
 fi
 
+if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+    echo "Error: --max-retries must be a non-negative integer." >&2
+    exit 1
+fi
+
 # --- Resolve GPU Mapping ---
 GPU_PARTITION=""
 GPU_TIME=""
@@ -134,43 +146,57 @@ GPU_NODES=""
 case "$GPU_TYPE" in
     V100)
         GPU_PARTITION="gpu"
-        GPU_TIME=180
+        GPU_TIME=360
         GPU_GRES="gpu:v100sxm:1"
         GPU_NODES="losangeles,sanfrancisco,sandiego"
         ;;
     A100_SXM)
         GPU_PARTITION="gpu"
-        GPU_TIME=180
+        GPU_TIME=360
         GPU_GRES="gpu:a100sxm:1"
         GPU_NODES="sacramento"
         ;;
     A100_PCIe)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=180
+        GPU_TIME=360
         GPU_GRES="gpu:a100pcie:1"
         GPU_NODES="fresko"
         ;;
-    H100)
+    H100_SXM)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=180
+        GPU_TIME=360
+        GPU_GRES="gpu:h100pcie:1"
+        GPU_NODES="sanjose"
+        ;;
+    H100_PCIe)
+        GPU_PARTITION="gpu_top"
+        GPU_TIME=360
         GPU_GRES="gpu:h100pcie:1"
         GPU_NODES="sanjose"
         ;;
     H200)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=180
+        GPU_TIME=360
         GPU_GRES="gpu:h200sxm:1"
         GPU_NODES="trinity"
         ;;
     L40S)
         GPU_PARTITION="gpu_top"
-        GPU_TIME=180
+        GPU_TIME=360
         GPU_GRES="gpu:l40spcie:1"
         GPU_NODES="fresko"
         ;;
     *)
-        echo "Error: Unknown GPU type '$GPU_TYPE'. Must be one of: V100, A100_SXM, A100_PCIe, H100, H200, L40S" >&2
+        echo "Error: Unknown GPU type '$GPU_TYPE'. Must be one of: V100, A100_SXM, A100_PCIe, H100_SXM, H100_PCIe, H200, L40S" >&2
         exit 1
+        ;;
+esac
+
+# --- Determine expected GPU for validation ---
+EXPECTED_GPU=""
+case "$GPU_TYPE" in
+    H100_SXM|H100_PCIe)
+        EXPECTED_GPU="$GPU_TYPE"
         ;;
 esac
 
@@ -266,6 +292,9 @@ log_message "  Batch size:   $BATCH_SIZE"
 log_message "  Max jobs:     $MAX_JOBS"
 log_message "  Temp dir:     $TEMP_DIR"
 log_message "  Log file:     $LOG_FILE"
+[ -n "$EXPECTED_GPU" ] && log_message "  Expected GPU: $EXPECTED_GPU"
+[ -n "$EXPECTED_GPU" ] && log_message "  Max retries:  $MAX_RETRIES"
+log_message "  Exclusive:    $EXCLUSIVE"
 log_message "  Dry run:      $DRY_RUN"
 
 # --- 1. Generate configs or use existing resume dir ---
@@ -307,6 +336,8 @@ CMD="$CMD --account $ACCOUNT"
 CMD="$CMD --max-jobs $MAX_JOBS"
 CMD="$CMD --log $SLURM_LOG"
 [ -n "$GPU_GRES" ] && CMD="$CMD --gres $GPU_GRES"
+[ -n "$EXPECTED_GPU" ] && CMD="$CMD --expected-gpu $EXPECTED_GPU --max-retries $MAX_RETRIES"
+[ "$EXCLUSIVE" = true ] && CMD="$CMD --exclusive"
 [ "$DRY_RUN" = true ] && CMD="$CMD --dry-run"
 
 log_message "Launching: $CMD"
