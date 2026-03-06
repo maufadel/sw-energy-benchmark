@@ -2,8 +2,8 @@
 CUDA_VISIBLE_DEVICES: "0"
 
 # Benchmark settings
-ITERATIONS: 5 
-MAX_TEST_DURATION: 300
+ITERATIONS: 5 #5
+MAX_TEST_DURATION: 300 #300  # 5 minutes in seconds
 CONTEXT_LENGTH: 1024
 WARMUP_DURATION: 60
 
@@ -25,3 +25,6 @@ LLM_MODELS:
   - "Qwen/Qwen2.5-1.5B-Instruct"
   - "Qwen/Qwen2.5-3B-Instruct"
   - "Qwen/Qwen2.5-7B-Instruct"
+#  - "Qwen/Qwen3-32B"
+#  - "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+#  - "google/gemma-2-27b-it"

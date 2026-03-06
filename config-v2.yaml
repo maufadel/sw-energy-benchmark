@@ -1,0 +1,68 @@
+# GPU configuration
+CUDA_VISIBLE_DEVICES: "0"
+
+# Benchmark settings
+ITERATIONS: 5 
+MAX_TEST_DURATION: 300
+CONTEXT_LENGTH: 1024
+WARMUP_DURATION: 60
+
+# Server experiment settings
+# 0.017: 1 request every 60 seconds
+# 0.33: 1 request every 3 seconds
+LAMBDA_QPS_ARRAY:
+  - 0.017
+  - 0.33
+
+# LLM models to benchmark
+LLM_MODELS:
+  - "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+  - "Qwen/Qwen2.5-0.5B-Instruct"
+  - "Qwen/Qwen2.5-1.5B-Instruct"
+  - "Qwen/Qwen2.5-3B-Instruct"
+  - "google/gemma-2-2b-it"
+  - "ibm-granite/granite-3.0-2b-instruct"
+  - "microsoft/Phi-3-mini-4k-instruct"
+  - "nvidia/AceMath-1.5B-Instruct"
+  - "nvidia/Nemotron-Mini-4B-Instruct"
+  - "tiiuae/Falcon3-3B-Instruct"
+  - "meta-llama/Llama-3.2-3B-Instruct"
+  - "microsoft/phi-2"
+  - "microsoft/Phi-tiny-MoE-instruct"
+  - "ibm-granite/granite-3.1-3b-a800m-instruct"
+  - "01-ai/Yi-1.5-6B-Chat"
+  - "01-ai/Yi-1.5-9B-Chat"
+  - "mistralai/Mistral-7B-Instruct-v0.3"
+  - "meta-llama/Llama-3.1-8B-Instruct"
+  - "Qwen/Qwen2.5-7B-Instruct"
+  - "allenai/OLMo-2-1124-7B-Instruct"
+  - "berkeley-nest/Starling-LM-7B-alpha"
+  - "deepseek-ai/deepseek-llm-7b-chat"
+  - "ibm-granite/granite-3.0-8b-instruct"
+  - "internlm/internlm2-7b"
+  - "mlabonne/AlphaMonarch-7B"
+  - "mlabonne/NeuralBeagle14-7B"
+  - "nvidia/AceMath-7B-Instruct"
+  - "nvidia/Mistral-NeMo-Minitron-8B-Instruct"
+  - "tiiuae/Falcon3-Mamba-7B-Instruct"
+  - "allenai/OLMoE-1B-7B-0924"
+  - "EleutherAI/gpt-j-6b"
+  - "allenai/OLMo-2-1124-13B-Instruct"
+  - "upstage/SOLAR-10.7B-Instruct-v1.0"
+  - "meta-llama/Llama-2-13b-chat-hf"
+  - "microsoft/Phi-3-medium-4k-instruct"
+  - "Qwen/Qwen3-14B"
+  - "google/gemma-3-12b-it"
+  - "microsoft/phi-4"
+  - "unsloth/gpt-oss-20b-BF16"
+  - "google/gemma-3-27b-it"
+  - "mistralai/Mistral-Small-24B-Instruct-2501"
+  - "internlm/internlm2_5-20b-chat"
+  - "mistralai/Mistral-Small-Instruct-2409"
+  - "upstage/solar-pro-preview-instruct"
+  - "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+  - "EleutherAI/gpt-neox-20b"
+  - "Qwen/Qwen1.5-MoE-A2.7B-Chat"
+  - "deepseek-ai/deepseek-moe-16b-base"
+  - "openai-community/gpt2"
+  - "nvidia/Llama-3.1-Minitron-4B-Width-Base"

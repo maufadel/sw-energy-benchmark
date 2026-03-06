@@ -1,7 +1,0 @@
-vllm==0.9.2
-datasets
-pymongo
-huggingface-hub
-
-# local
-energymeter @ file:EnergyMeter

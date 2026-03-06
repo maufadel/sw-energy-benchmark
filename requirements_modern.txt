@@ -1,0 +1,9 @@
+vllm==0.14.1
+datasets==4.5.0
+pymongo
+huggingface-hub[cli]
+pyyaml
+transformers==4.56.0
+nvidia-ml-py==13.590.48
+setuptools # for triton
+ai-energymeter==2.0.2
