@@ -1,12 +1,11 @@
-# ML Energy Benchmark
-TODO: description
+# WattCounts Benchmark
+WattCounts is an open-source benchmark for measuring the energy consumption and performance of LLM inference across heterogeneous GPU hardware. It is the foundation of the Watt Counts dataset, covering 50 LLMs across 10 NVIDIA GPUs in both batch and server deployment scenarios — resulting in 5,000+ experiments and 14M+ power draw samples. The benchmark measures GPU power via NVML (no external power meters required), collects energy, throughput, and latency metrics, and supports both bare-metal machines and SLURM-managed HPC clusters. 
 
 ## Install
 Clone repo with submodules:
 ```
 git clone https://github.com/maufadel/sw-energy-benchmark.git
 cd sw-energy-benchmark
-git submodule update --init --recursive
 ```
 
 EnergyMeter is used to track the energy used by the CPU, main memory, GPU and disk. The CPU and main memory are tracked through RAPL, so if RAPL is not available, only disk and GPU will be reported.
@@ -25,6 +24,8 @@ EnergyMeter is used to track the energy used by the CPU, main memory, GPU and di
 3. Simply run: `./run_benchmark.sh config-v2.yaml 2>&1 | tee -a run_benchmark-config-v2-<GPU-NAME>.txt`
    The txt file will contain all the logging outputs. For a first run, it will be created. If you cancel the script in between and execute it again it will resume and continue to append to the file.
 
+You can choose the model(s) you want to run, rate of requests for the server scenario, number of iterations, and other settings by modifying the file config-v2.yaml.
+
 ## How to use (SLURM cluster)
 
 The SLURM workflow has two main components:
@@ -38,6 +39,7 @@ There is also an optional `run_benchmark_gpu.sh` convenience wrapper that maps a
 - Access to a SLURM cluster with GPU nodes
 - `uv` installed (see Install section above)
 - A Hugging Face token in a `.env` file at the project root (see bare metal instructions above)
+- A config.yaml, setting the parameters to use for the run including model(s), rate of requests for the server scenario, number of iterations, and other settings. The already included file config-v2.yaml can be used for this purpose.
 
 ### Basic usage
 ```bash
