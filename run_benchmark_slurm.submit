@@ -5,12 +5,12 @@
 #SBATCH --nodes=1
 #SBATCH --account=init
 #SBATCH --gres=gpu:1
-#SBATCH --output=/cluster/home/fues/sw-energy-benchmark/log/%j_%N__energy_bench.out
-#SBATCH --error=/cluster/home/fues/sw-energy-benchmark/log/%j_%N__energy_bench.err
+#SBATCH --output=log/%j_%N__energy_bench.out
+#SBATCH --error=log/%j_%N__energy_bench.err
 
-# Set the root folder for the project
-ROOT_FOLDER="/cluster/home/fues/sw-energy-benchmark"
-UV_PATH="/cluster/home/fues/.local/bin/uv"
+# Set the root folder for the project (configurable via env vars)
+ROOT_FOLDER="${ROOT_FOLDER:-/path/to/sw-energy-benchmark}"
+UV_PATH="${UV_PATH:-$HOME/.local/bin/uv}"
 
 # Derive config file: array mode (SLURM_ARRAY_TASK_ID + BATCH_CONFIG_DIR) or CLI arg
 if [ -n "${SLURM_ARRAY_TASK_ID:-}" ] && [ -n "${BATCH_CONFIG_DIR:-}" ]; then
@@ -39,7 +39,6 @@ source "$VENV_DIR/bin/activate"
 # Set up a trap to clean up the virtual environment on exit
 trap 'rm -rf -- "$VENV_DIR"' EXIT
 
-
 # --- GPU-Specific Dependency Installation ---
 
 # First, check if nvidia-smi is available to prevent errors
@@ -50,7 +49,6 @@ then
 fi
 
 # Detect the GPU name. We only query for one GPU since we requested one (--gres=gpu:1).
-# The `| head -n 1` ensures we only get one line of output.
 GPU_NAME=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader,nounits | head -n 1)
 echo "Detected GPU: $GPU_NAME"
 
@@ -76,37 +74,9 @@ if [ -n "${EXPECTED_GPU:-}" ]; then
     echo "[$(date)] GPU match confirmed: Expected $EXPECTED_GPU, got '$GPU_NAME'"
 fi
 
-# Default requirements file
+# All GPUs use the same modern requirements file
 REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-
-# Choose the requirements file based on the detected GPU name
-# Using wildcards (*) makes the matching more robust (e.g., matches "NVIDIA A100-SXM4-40GB")
-case "$GPU_NAME" in
-  *"V100"*)
-    echo "Found Tesla V100. Using modern requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-    ;;
-  *"T4"*)
-    echo "Found Tesla T4. Using modern requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-    ;;
-  *"A100"*)
-    echo "Found NVIDIA A100. Using modern requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-    ;;
-  *"H100"*)
-    echo "Found NVIDIA H100. Using modern requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-    ;;
-  *"H200"*)
-    echo "Found NVIDIA H200. Using modern requirements."
-    REQS_FILE="$ROOT_FOLDER/requirements_modern.txt"
-    ;;
-  *)
-    echo "Warning: Unrecognized GPU '$GPU_NAME'. Falling back to modern requirements file: $REQS_FILE"
-    # The default is already set, so no action is needed here.
-    ;;
-esac
+echo "Using requirements: $REQS_FILE"
 
 # Check if the selected requirements file exists
 if [ ! -f "$REQS_FILE" ]; then
@@ -114,60 +84,23 @@ if [ ! -f "$REQS_FILE" ]; then
     exit 1
 fi
 
-# Install dependencies into the virtual environment using the selected file
+# Install dependencies into the virtual environment
 echo "Installing dependencies from: $REQS_FILE"
 "$UV_PATH" pip install -r "$REQS_FILE"
-
 echo "Dependencies installed successfully."
 
-# Discover the correct library path within the venv
-# --- START DEBUGGING BLOCK ---
-echo "--- [DEBUG] Verifying library installation ---"
-
-# Define the site-packages path for easier access
+# Set LD_LIBRARY_PATH for CUDA libraries in the venv
 SITE_PACKAGES="$VENV_DIR/lib/python3.11/site-packages"
-
-echo "[DEBUG] VENV_DIR is: $VENV_DIR"
-echo "[DEBUG] Searching for libcusparseLt.so.0 in the entire venv..."
-
-# Search the entire virtual environment for the missing library
-find "$VENV_DIR" -name "libcusparseLt.so.0"
-
-echo "[DEBUG] Listing contents of the expected directory..."
-# List the contents of the directory where the library SHOULD be
-ls -l "$SITE_PACKAGES/nvidia/cusparse/lib/"
-
-echo "[DEBUG] Current LD_LIBRARY_PATH is: $LD_LIBRARY_PATH"
-echo "--- [DEBUG] End of verification ---"
-
-
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cusparselt/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
 
-echo "[DEBUG] New LD_LIBRARY_PATH is: $LD_LIBRARY_PATH"
-echo "--- [DEBUG] End of verification ---"
-
-# Set up a job-specific Hugging Face home to isolate model downloads
-HF_HOME_DIR="/cluster/projects/2025_fues_PROJ_HF/.cache/huggingface"
+# Set up Hugging Face home to share model downloads across jobs
+HF_HOME_DIR="${HF_HOME_DIR:-/path/to/shared/huggingface-cache}"
 mkdir -p "$HF_HOME_DIR"
 export HF_HOME="$HF_HOME_DIR"
-
-
-echo "[DEBUG] Current HF_HOME_DIR is: $HF_HOME_DIR"
-
-
-# Set up a job-specific vLLM cache
-#VLLM_CACHE_ROOT="/tmp/vllm-$SLURM_JOB_ID"
-#mkdir -p "$VLLM_CACHE_ROOT"
-#export VLLM_CACHE_ROOT="$VLLM_CACHE_ROOT"
-
-echo "[DEBUG] Current VLLM_CACHE_ROOT is: $VLLM_CACHE_ROOT"
-
 
 ## DOWNLOADING MODELS BEFORE
 # --- Configuration ---
 ENV_FILE=".env"
-
-# --- Script Start ---
 
 # 1. Check if the YAML file exists
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -177,7 +110,6 @@ fi
 
 # 2. Check if the .env file exists and load the token
 if [ -f "$ENV_FILE" ]; then
-    # Using 'set -a' and 'set +a' is a robust way to export variables from the file
     set -a
     source "$ENV_FILE"
     set +a
@@ -196,20 +128,13 @@ if [ -z "$HF_TOKEN" ]; then
     echo "-----------------------------------------------------"
 fi
 
-
 # 4. Parse the YAML file and download each model
 echo "Parsing models from $CONFIG_FILE..."
 
-# Use awk to find the LLM_MODELS block and extract model names.
-# This is more robust for complex YAML files and ignores commented-out lines.
 MODELS_TO_DOWNLOAD=$(awk '
-  # Start processing when we see the LLM_MODELS key
   /^LLM_MODELS:/ { in_models_block = 1; next }
-  # Stop processing if we see another top-level key
   /^[A-Z_]+:/ { in_models_block = 0 }
-  # If in the block, the line is a model entry, and not a comment...
   in_models_block && /^\s*-\s*"/ && !/^\s*#/ {
-    # ...extract the string inside the quotes.
     match($0, /"([^"]+)"/);
     if (RSTART) {
       print substr($0, RSTART + 1, RLENGTH - 2);
@@ -217,16 +142,13 @@ MODELS_TO_DOWNLOAD=$(awk '
   }
 ' "$CONFIG_FILE")
 
-
 for model in $MODELS_TO_DOWNLOAD; do
     echo "====================================================="
     echo "Preparing to download: $model"
     echo "====================================================="
 
-    # Use huggingface-cli to download.
-    huggingface-cli download "$model" --token "$HF_TOKEN" 
+    huggingface-cli download "$model" --token "$HF_TOKEN"
 
-    # Check if the download was successful
     if [ $? -eq 0 ]; then
         echo "--> SUCCESS: Successfully downloaded $model."
     else
@@ -238,15 +160,6 @@ echo ""
 echo "====================================================="
 echo "All model downloads attempted. Process finished."
 echo "====================================================="
-
-
-
-
-
-
-# Set up a trap to clean up the virtual environment and HF home on exit
-#trap 'rm -rf -- "$VENV_DIR" "$HF_HOME_DIR" "VLLM_CACHE_ROOT"' EXIT
-#trap 'rm -rf -- "$VENV_DIR"' EXIT
 
 # --- Build descriptive result folder path ---
 # GPU label: prefer EXPECTED_GPU (clean), fall back to sanitized nvidia-smi name
@@ -284,9 +197,6 @@ RESULTS_FILE="$JOB_RESULTS_FOLDER/system_info.txt"
 # ---------------------------------------
 echo "[$(date)] Registering system info..."
 
-# The > operator creates and overwrites the file with the first command's output.
-# The >> operator appends the output of subsequent commands to the same file.
-
 echo "lscpu" > "$RESULTS_FILE"
 lscpu >> "$RESULTS_FILE"
 echo -e "\n" >> "$RESULTS_FILE"
@@ -307,7 +217,6 @@ echo "[$(date)] System info registered in $RESULTS_FILE"
 
 # ---------------------------------------
 # Run the Python scripts for language
-# You can redirect the output of each script to a specific file in your job's result folder
 echo "[$(date)] Running llm_server_optimized.py..."
 srun --export=ALL python "$ROOT_FOLDER/language/llm_server_optimized.py" "$JOB_RESULTS_FOLDER" --config "$CONFIG_FILE" > "$JOB_RESULTS_FOLDER/llm_server_optimized.out"
 if [ $? -ne 0 ]; then
@@ -322,20 +231,4 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# ---------------------------------------
-# Run the Python scripts for vision
-#echo "[$(date)] Running resnet50_batch.py..."
-#python vision/resnet50_batch.py > "$JOB_RESULTS_FOLDER/resnet50_batch.out"
-#echo "[$(date)] Running resnet50_server.py..."
-#python vision/resnet50_server.py > "$JOB_RESULTS_FOLDER/resnet50_server.out"
-
-# ---------------------------------------
-# Run the Python scripts for tabular
-#echo "[$(date)] Running tabular_batch.py..."
-#python tabular/tabular_batch.py > "$JOB_RESULTS_FOLDER/tabular_batch.out"
-#echo "[$(date)] Running tabular_server.py..."
-#python tabular/tabular_server.py > "$JOB_RESULTS_FOLDER/tabular_server.out"
-
-
 echo "[$(date)] Job Finished"
-

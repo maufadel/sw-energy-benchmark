@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Parameterized SLURM orchestration script.
-# Replaces run_all_slurm_batch.sh, run_all_slurm_batch_l40.sh, and
-# run_all_slurm_batch_qwen_H200.sh with a single invocation per node.
+# Splits a config into per-model batches and submits one SLURM job each.
+# Typically invoked via run_benchmark_gpu.sh rather than directly.
 
 set -euo pipefail
 
